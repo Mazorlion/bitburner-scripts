@@ -7,6 +7,7 @@ const argsSchema = [
     ['show-peoplekilled', false],
     ['hide-stocks', false],
     ['hide-RAM-utilization', false],
+    [`hide-corp-stats`, false],
 ];
 
 export function autocomplete(data, args) {
@@ -34,6 +35,7 @@ export async function main(ns) {
     addCSS(doc);
     const hudData = [];
     const addHud = (...args) => hudData.push(args);
+    const addSectionDivider = () => hudData.push([`hr`]);
     const newline = (txt, tt = "") => {
         let p = doc.createElement("p"); p.appendChild(doc.createTextNode(txt)); p.className = "tooltip"; //p.title = tt;
         let s = doc.createElement("span"); p.appendChild(s); s.appendChild(doc.createTextNode(tt)); s.className = "tooltiptext";
@@ -79,7 +81,8 @@ export async function main(ns) {
             if (2 in dictSourceFiles || 2 == bitNode) { // Gang income is only relevant once gangs are unlocked
                 var gangInfo = await getGangInfo(ns);
                 if (gangInfo) {
-                    // Add Gang Income
+                    // Add Gang Income                    
+                    addSectionDivider();
                     addHud("Gang Inc", formatMoney(gangInfo.moneyGainRate * 5, 3, 2) + '/sec',
                         `Gang (${gangInfo.faction}) income per second while doing tasks.` +
                         `\nIncome: ${formatMoney(gangInfo.moneyGainRate * 5)}/sec (${formatMoney(gangInfo.moneyGainRate)}/tick)` +
@@ -100,6 +103,7 @@ export async function main(ns) {
                 && !gangInfo) { // If in a gang, you know you have oodles of bad Karma. Save some space
                 let karmaShown = formatNumberShort(karma, 3, 2);
                 if (2 in dictSourceFiles && 2 != bitNode && !gangInfo) karmaShown += '/54k'; // Display karma needed to unlock gangs ouside of BN2
+                addSectionDivider();
                 addHud("Karma", karmaShown, "After Completing BN2, you need -54,000 Karma in other BNs to start a gang. You also need a tiny amount to join some factions. The most is -90 for 'The Syndicate'");
             }
 
@@ -116,9 +120,57 @@ export async function main(ns) {
                     (playerInfo = await getNsDataThroughFile(ns, 'ns.getPlayer()', '/Temp/getPlayer.txt')).inBladeburner;
                 if (inBladeburner) {
                     const bbRank = await getNsDataThroughFile(ns, 'ns.bladeburner.getRank()', '/Temp/bladeburner-getRank.txt');
-                    const bbSP = await getNsDataThroughFile(ns, 'ns.bladeburner.getSkillPoints()', '/Temp/bladeburner-getSkillPoints.txt');
+                    const bbSP = await getNsDataThroughFile(ns, 'ns.bladeburner.getSkillPoints()', '/Temp/bladeburner-getSkillPoints.txt');                    
+                    addSectionDivider();
                     addHud("BB Rank", formatSixSigFigs(bbRank), "Your current bladeburner rank");
                     addHud("BB SP", formatSixSigFigs(bbSP), "Your current unspent bladeburner skill points");
+                }
+            }
+            
+            if(!options[`hide-corp-stats`]) {                
+                const isValid = (fileContents) => {
+                    const kOneMinute = 1000 * 60;
+                    return fileContents && Date.now() - JSON.parse(fileContents).timestamp < kOneMinute;
+                }
+                const statsContent = ns.read(`/Temp/corp-stats.txt`);
+                if (isValid(statsContent)) {
+                    const corpStats = JSON.parse(statsContent);
+                    addSectionDivider();
+                    /**
+                     * @type {CorporationInfo}
+                     */
+                    const corp = corpStats.corp;
+                    /**
+                     * @type {Division}
+                     */
+                    const division = corpStats.division;
+                    addHud(`Corp Inc`, `${formatMoney(corp.revenue - corp.expenses, 3, 2)}/sec`, 
+                        `Current corporation income per second.\n` +
+                        `Revenue: ${formatMoney(corp.revenue, 3, 2)}\n` +
+                        `Expenses: ${formatMoney(corp.expenses, 3, 2)}`);
+                    addHud(`Corp Funds`, `${formatMoney(corp.funds, 3, 2)}`, 
+                        `Currently available corporation funds.`);
+                    addHud(`Corp DevP`, `${corpStats.devProgress.toFixed(2)}%`, 
+                        `Progress of product development.\n` + 
+                        `Divison Research: ${formatNumberShort(division.research)}\n` +
+                        `Has Lab: ${corpStats.hasLab}\n` +
+                        `Has Market-TA.II: ${corpStats.hasMarketTa}`);
+                    if (!corp.public && corpStats.currentOffer) {
+                        /**
+                         * @type {InvestmentOffer}
+                         */
+                        const offer = corpStats.currentOffer;
+                        addHud(`Corp IOff`, `${formatMoney(offer.funds, 3, 2)}`,
+                            `Current private investment offer.\n` +
+                            `Round: ${offer.round}, Shares: ${formatNumberShort(offer.shares)}`);
+                    } else if (corp.public) {
+                        // If not public the initial share price is detemined by the internal valuation so we don't know it.
+                        addHud(`Corp Shr$`, `${formatMoney(corp.sharePrice)}`,
+                            `Total shares: ${formatNumberShort(corp.totalShares)}\n` +
+                            `Owned Shares: ${formatNumberShort(corp.numShares)}\n` +
+                            `Issued Shares: ${formatNumberShort(corp.issuedShares)}\n` +
+                            `Is Public: ${corp.public}`);
+                    }
                 }
             }
 
@@ -128,7 +180,8 @@ export async function main(ns) {
                 const rooted = servers.filter(s => s.hasAdminRights).length;
                 const purchased = servers.filter(s => s.hostname != "home" && s.purchasedByPlayer).length; // "home" counts as purchased by the game
                 const likelyHacknet = servers.filter(s => s.hostname.startsWith("hacknet-node-"));
-                // Add Server count.
+                // Add Server count.                
+                addSectionDivider();
                 addHud("Servers", `${servers.length}/${rooted}/${purchased}`, `The number of servers on the network (${servers.length}) / ` +
                     `number rooted (${rooted}) / number purchased ` + (likelyHacknet.length > 0 ?
                         `(${purchased - likelyHacknet.length} servers + ${likelyHacknet.length} hacknet servers)` : `(${purchased})`));
@@ -158,10 +211,23 @@ export async function main(ns) {
             // Clear the previous loop's custom HUDs
             hook1.innerHTML = hook0.innerHTML = "";
             // Create new HUD elements with info collected above.
+            const hr = () => {
+                const elem = doc.createElement(`hr`);
+                elem.size = 0.1;
+                elem.style.margin = 0;
+                elem.style[`margin-top`] = `1px`;
+                elem.style[`margin-bottom`] = `1px`;
+                return elem;
+            }
             for (const hudRow of hudData) {
                 const [header, formattedValue, toolTip] = hudRow;
-                hook0.appendChild(newline(header.padEnd(9, " "), toolTip));
-                hook1.appendChild(newline(formattedValue, toolTip));
+                if (header === `hr`) {
+                    hook0.appendChild(hr());
+                    hook1.appendChild(hr());
+                } else {
+                    hook0.appendChild(newline(header.padEnd(9, " "), toolTip));
+                    hook1.appendChild(newline(formattedValue, toolTip));
+                }
             }
             hudData.length = 0; // Clear the hud data for the next iteration
 

@@ -1,3 +1,4 @@
+import { requestBribe } from './corp-helpers.js';
 import {
     log, getConfiguration, instanceCount, formatNumberShort, formatMoney,
     getNsDataThroughFile, getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue
@@ -58,7 +59,8 @@ const argsSchema = [ // The set of all command line arguments
     ['sort', null], // What stat is the table of total faction stats sorted by. Defaults to your first --stat-desired
     ['hide-stat', []], // Stats to exclude from the final table (partial matching works)
     ['unique', false], // When displaying cumulative stats by faction, only include augs not given by a faction further up the list
-    ['u', false], // Flag alias for --unique
+    ['u', false], // Flag alias for --unique,
+    ['disable-bribes', false], // Set to true to disable requesting corp bribes
 ];
 
 // For convenience, these lists provide command-line <tab> auto-complete values
@@ -176,6 +178,9 @@ export async function main(ns) {
     // Create the table of all augmentations, and the breakdown of what we can afford
     await manageUnownedAugmentations(ns, omitAugs);
 
+    // Bribe factions
+    await bribeFactions(ns);
+
     /* TODO: Currently, an exploit lets us accept Stanek's gift after purchasing other augs. Once that stops working, we should put this back
     if (options.purchase && ownedAugmentations.length <= 1 && 13 in ownedSourceFiles && !ownedAugmentations.includes(staneksGift) && !options['ignore-stanek'])
         log(ns, `WARNING: You have not yet accepted Stanek's Gift from the church in Chongqing. Purchasing augs will ` +
@@ -260,11 +265,13 @@ async function updateFactionData(ns, factionsToOmit) {
         joined: joinedFactions.includes(faction),
         reputation: dictFactionReps[faction] || 0,
         favor: dictFactionFavors[faction],
+        canDonate: ![gangFaction, ...factionsWithoutDonation].includes(faction),
         donationsUnlocked: dictFactionFavors[faction] >= favorToDonate &&
             // As a rule, cannot donate to gang factions or any of the below factions - need to use other mechanics to gain rep.
             ![gangFaction, ...factionsWithoutDonation].includes(faction),
         augmentations: dictFactionAugs[faction],
         unownedAugmentations: function (includeNf = false) { return this.augmentations.filter(aug => !simulatedOwnedAugmentations.includes(aug) && (aug != strNF || includeNf)) },
+        highestAugReputationReq: function () { return this.unownedAugmentations().map(augName => augmentationData[augName]).reduce((max, aug) => Math.max(max, aug.reputation), 0) },
         mostExpensiveAugCost: function () { return this.augmentations.map(augName => augmentationData[augName]).reduce((max, aug) => Math.max(max, aug.price), 0) },
         totalUnownedMults: function () {
             return this.unownedAugmentations().map(augName => augmentationData[augName])
@@ -480,6 +487,22 @@ async function manageUnownedAugmentations(ns, ignoredAugs) {
         log(ns, `INFO: The above ${purchaseableAugs.length} augmentations ${options.purchase ? 'will' : 'can'} be purchased ` +
             `${stockValue > 0 ? 'after liquidating stocks' : 'right now'}.` +
             (options.purchase ? '' : ' Run with the --purchase flag to make the purchase.'), printToTerminal);
+}
+
+/**
+ * Request bribes for factions that we still need rep for, and can bribe.
+ * @param {NS} ns 
+ */
+async function bribeFactions(ns) {
+    if (options[`disable-bribes`])
+        return;
+
+    const bribableFactions =
+        Object.values(factionData)
+            .filter(faction => faction.joined && faction.canDonate && faction.highestAugReputationReq() > faction.reputation);
+    for (const faction of bribableFactions) {
+        await requestBribe(ns, faction, faction.highestAugReputationReq());
+    }
 }
 
 /** @param {[]} sortedAugs 
