@@ -400,7 +400,7 @@ async function canDoBladeburnerWork(ns) {
     const busy = await getNsDataThroughFile(ns, 'ns.isBusy()', '/Temp/isBusy.txt');
     if (!busy) return true;
     log(ns, `WARNING: Cannot perform Bladeburner actions because the player is busy ` +
-        `and hasn't installed the augmentation "${simulacrumAugName}"...`, false, 'warning');
+        `and hasn't installed the augmentation "${simulacrumAugName}"...`, false);
     return false;
 }
 
