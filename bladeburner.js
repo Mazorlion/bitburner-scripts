@@ -408,7 +408,7 @@ async function canDoBladeburnerWork(ns) {
     if (!busy) return lastCanWorkCheckIdle = true;
     if (lastCanWorkCheckIdle)
         log(ns, `WARNING: Cannot perform Bladeburner actions because the player is busy ` +
-            `and hasn't installed the augmentation "${simulacrumAugName}"...`, false, 'warning');
+            `and hasn't installed the augmentation "${simulacrumAugName}"...`, false);
     return lastCanWorkCheckIdle = false;
 }
 
