@@ -188,7 +188,7 @@ async function tryToBuyBestServerPossible(ns) {
         }
 
         // It's only worth deleting our old server if the new server will be 16x bigger or more (or if it's the biggest we can buy)
-        if (exponentLevel == maxPurchasableServerRamExponent || worstServerRam * 16 <= maxRamPossibleToBuy) {
+        if (exponentLevel == maxPurchasableServerRamExponent || worstServerRam * 8 <= maxRamPossibleToBuy) {
             ns.run("remove-worst-server.js");
             return setStatus(ns, `hostmanager.js requested to delete server ${worstServerName} (${formatRam(worstServerRam)} RAM) ` +
                 `to make room for a new ${formatRam(maxRamPossibleToBuy)} Server.`);
