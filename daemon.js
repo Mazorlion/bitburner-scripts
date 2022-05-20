@@ -36,7 +36,7 @@ const argsSchema = [
     ['silent-misfires', false], // Instruct remote scripts not to alert when they misfire
     ['initial-max-targets', 2], // Initial number of servers to target / prep (TODO: Scale this as BN progression increases)
     ['max-steal-percentage', 0.75], // Don't steal more than this in case something goes wrong with timing or scheduling, it's hard to recover from
-    ['cycle-timing-delay', 16000], // Time
+    ['cycle-timing-delay', 8000], // Time 
     ['queue-delay', 1000], // Delay before the first script begins, to give time for all scripts to be scheduled
     ['max-batches', 40], // Maximum overlapping cycles to schedule in advance. Note that once scheduled, we must wait for all batches to complete before we can schedule more
     ['i', false], // Farm intelligence with manual hack.
@@ -308,7 +308,7 @@ export async function main(ns) {
     periodicScripts.forEach(tool => tool.name = getFilePath(tool.name));
     hackTools = [
         { name: "/Remote/weak-target.js", shortName: "weak", threadSpreadingAllowed: true },
-        { name: "/Remote/grow-target.js", shortName: "grow" },
+        { name: "/Remote/grow-target.js", shortName: "grow", threadSpreadingAllowed: true },
         { name: "/Remote/hack-target.js", shortName: "hack" },
         { name: "/Remote/manualhack-target.js", shortName: "manualhack" },
         { name: "/Remote/share.js", shortName: "share", threadSpreadingAllowed: true },
