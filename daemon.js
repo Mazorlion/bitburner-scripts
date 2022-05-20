@@ -262,6 +262,10 @@ export async function main(ns) {
             name: "bladeburner.js", tail: openTailWindows,
             shouldRun: () => 7 in dictSourceFiles && (_cachedPlayerInfo.inBladeburner || [6, 7].includes(playerBitnode))
         },
+        {
+            name: `corporation.js`, tail: openTailWindows,
+            shouldRun: () => reqRam(4048) && 3 in dictSourceFiles
+        },
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));
     // Add any additional scripts to be run provided by --run-script arguments
