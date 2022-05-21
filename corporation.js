@@ -1,10 +1,11 @@
 import {
-    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, log
+    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, instanceCount, log
 } from './helpers.js';
 
 let options = null; // The options used at construction time
 const argsSchema = [ // The set of all command line arguments
-    ['verbose', false], // Should the script print debug logging.
+    ['verbose', true], // Should the script print debug logging.
+    ['skip_all_setup', false], // Should we just jump straight to the loop?
 ];
 export function autocomplete(data, args) {
     data.flags(argsSchema);
@@ -14,7 +15,7 @@ export function autocomplete(data, args) {
 const kCorpName = `Hemmy`;
 const kAgricultureDivision = `Ag`;
 const kTobaccoDivision = `Tobacco`;
-const kCities = [`Aevum`, `Sector-12`, `Chongqing`, `Ishima`, `Volhaven`, `New Tokyo`];
+const kCities = [`Aevum`, `Chongqing`, `Sector-12`, `New Tokyo`, `Ishima`, `Volhaven`];
 const kProductDevCity = `Aevum`;
 const kMaxOfficeSize = 1000;
 
@@ -59,11 +60,24 @@ let getDivision = (division) => corp_.getDivision(division);
 /**
  * 
  * @param {String} division 
+ * @returns {Product[]}
+ */
+let getProducts = (division) => getDivision(division).products
+        .map(product => corp_.getProduct(kTobaccoDivision, product));
+/**
+ * 
+ * @param {String} division 
  * @param {String} city 
  * @returns {Office}
  */
-let office = (division, city) => corp_.getOffice(division, city);
-let numEmployees = (division, city) => office(division, city).employees.length;
+let getOffice = (division, city) => corp_.getOffice(division, city);
+/**
+ * 
+ * @param {*} division 
+ * @param {*} city 
+ * @returns {Number}
+ */
+let numEmployees = (division, city) => getOffice(division, city).employees.length;
 
 // args
 let verbose;
@@ -93,7 +107,7 @@ async function sleepWhileNotInStartState(waitForNext = false) {
  * @param {Number} desiredValue Desired end value
  * @returns {Number} Per-second rate to purchase to achieve `desiredValue`
  */
-async function calculateOneTickPurchaseRate(material, desiredValue) {
+function calculateOneTickPurchaseRate(material, desiredValue) {
     const currentAmount = material.qty;
     const secondsPerTick = 10;
     return (desiredValue - currentAmount) / 10;
@@ -101,10 +115,11 @@ async function calculateOneTickPurchaseRate(material, desiredValue) {
 
 async function purchaseInOneTick(items) {
     // Wait for START, but if we're already in one that's fine.
-    await sleepWhileNotInStartState(ns_, false);
+    await sleepWhileNotInStartState(false);
     const cityItemPairs = kCities.reduce(
         (res, city) => res.concat(
             items.map((item) => ({ city: city, item: item }))), []);
+    let needPurchase = false;
     cityItemPairs.forEach(pair => {
         const city = pair.city;
         const item = pair.item;
@@ -113,11 +128,14 @@ async function purchaseInOneTick(items) {
             log(ns_, `Not purchasing ${item.name} because we already have sufficient in the warehouse.`);
             return;
         }
+        needPurchase = true;
         log(ns_, `Purchasing ${item.name} in ${city} at ${targetRate}.`)
         corp_.buyMaterial(kAgricultureDivision, city, item.name, targetRate);
     });
+    if (!needPurchase)
+        return;
     // Wait for purchases to be made by waiting for the next START.
-    await sleepWhileNotInStartState(ns_, true);
+    await sleepWhileNotInStartState(true);
     cityItemPairs.forEach(pair => {
         const city = pair.city;
         const item = pair.item;
@@ -140,7 +158,7 @@ async function doPriceDiscovery() {
     if (hasMarketTA2) {
         for (const city of division.cities) {
             // Default prices
-            division.products.forEach((product) => corp_.sellProduct(division.name, city, product, 'MAX', 'MP'));
+            division.products.forEach((product) => corp_.sellProduct(division.name, city, product, 'MAX', 'MP', false));
             // Turn on automation.
             division.products.forEach((product) => corp_.setProductMarketTA2(division.name, product, true));
         }
@@ -159,6 +177,7 @@ async function doPriceDiscovery() {
         // sPrice ought to be of the form 'MP * 123.45'. If not, we should use the price of the last product we calculated.
         let lastPriceMultiplier = prevProductMultiplier;
         try {
+            // @ts-ignore
             let sMult = sPrice.split('*')[1];
             lastPriceMultiplier = Number.parseFloat(sMult);
         } catch { }
@@ -219,7 +238,7 @@ async function doPriceDiscovery() {
     if (verbose) log(ns_, ``);
 }
 
-async function waitForFunds(targetFunction, reason, sleepDuration = 3000) {
+async function waitForFunds(targetFunction, reason, sleepDuration = 15000) {
     while (targetFunction() > funds()) {
         log(ns_, `Waiting for money to ${reason}. Have: ${formatMoney(funds())}, Need: ${formatMoney(targetFunction())}`);
         await ns_.sleep(sleepDuration);
@@ -235,14 +254,14 @@ async function waitForInvestmentOffer(minOffer, sleepDuration = 15000) {
     corp_.acceptInvestmentOffer();
 }
 
-async function maybeExpandCity(division, city, waitForFunds = true) {
+async function maybeExpandCity(division, city, wait = true) {
     if (getDivision(division).cities.includes(city))
         return;
-    if (waitForFunds)
+    if (wait)
         await waitForFunds(() => corp_.getExpandCityCost(), `expand to ${city}`);
     else if (funds() < corp_.getExpandCityCost()) 
         return false;
-    corp_.expandCity(city);
+    corp_.expandCity(division, city);
     return true;
 }
 
@@ -255,19 +274,28 @@ function setSmartSupply(division) {
 
 // Fills employees in `city` up to `office.size`.
 function fillEmployees(division, city) {
-    while (numEmployees(division, city) < office(division, city).size) {
+    while (numEmployees(division, city) < getOffice(division, city).size) {
         corp_.hireEmployee(division, city);
     }
 }
 
+/**
+ * 
+ * @param {String} division 
+ * @param {String} city 
+ * @returns 
+ */
 async function maybeAutoAssignEmployees(division, city) {
+    const employeeJobs = getOffice(division, city).employeeJobs;
+    const assigned = [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`].reduce((sum, job) => sum + employeeJobs[job]);
+    const employees = numEmployees(division, city);
     // All employees working, nothing to do.
-    if (office(division, city).employeeJobs[`Unassigned`] === 0)
+    // @ts-ignore
+    if (assigned === employees && employeeJobs.Unassigned === 0)
         return;
 
-    const numEmployees = numEmployees(division, city);
     // Special case 9
-    if (numEmployees === 9) {
+    if (employees === 9) {
         for (const job of [`Operations`, `Engineer`, `Management`, `Research & Development`]) {
             await corp_.setAutoJobAssignment(division, city, job, 2);
         }
@@ -277,25 +305,25 @@ async function maybeAutoAssignEmployees(division, city) {
 
     // Evenly balance employees otherwise, preferring ones earlier in this list.
     const jobs = [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`];
-    const baseEmployees = Math.floor(numEmployees / jobs.length);
+    const baseEmployees = Math.floor(employees / jobs.length);
     for (let i = 0; i < jobs.length; ++i) {
-        const adjustment = i < numEmployees % jobs.length ? 1 : 0;
+        const adjustment = i < employees % jobs.length ? 1 : 0;
         await corp_.setAutoJobAssignment(division, city, jobs[i], baseEmployees + adjustment);
     }
 }
 
 // Returns true if an upgrade happened, false otherwise.
-async function tryUpgradeOfficeSize(division, city, targetSize, waitForFunds = true) {
-    const startingSize = office(division, city).size;
+async function tryUpgradeOfficeToSize(division, city, targetSize, wait = true) {
+    const startingSize = getOffice(division, city).size;
     if (startingSize >= targetSize)
         return false;
 
     const increment = targetSize - startingSize;
     log(ns_, `Upgrading ${city} by ${increment} to ${targetSize}.`);
 
-    const costFunction = () => corp_.getOfficeSizeUpgradeCost(divion, city, increment);
+    const costFunction = () => corp_.getOfficeSizeUpgradeCost(division, city, increment);
     const reason = `upgrade ${city} by ${increment} to ${targetSize}`
-    if (waitForFunds)
+    if (wait)
         await waitForFunds(costFunction, reason);
     else if (funds() < costFunction())
         return false;
@@ -305,12 +333,20 @@ async function tryUpgradeOfficeSize(division, city, targetSize, waitForFunds = t
 }
 
 const defaultUpgradeOfficeSettings = { assignEmployees: true, waitForFunds: true, returnIfNoOfficeUpgrade: false };
+/**
+ * 
+ * @param {String} division 
+ * @param {String} city 
+ * @param {Number} targetSize 
+ * @param {*} upgradeSettings 
+ * @returns 
+ */
 async function tryUpsizeHireAssignOffice(division, city, targetSize, upgradeSettings = defaultUpgradeOfficeSettings) {
-    maybeExpandCity(division, city, upgradeSettings.waitForFunds);
+    await maybeExpandCity(division, city, upgradeSettings.waitForFunds);
     if (numEmployees(division, city) >= targetSize)
         return false;
-    let sizeChangeHappened = await tryUpgradeOfficeSize(division, city, targetSize, upgradeSettings.waitForFunds);
-    if (!sizeChangeHappened && returnIfNoOfficeUpgrade)
+    let sizeChangeHappened = await tryUpgradeOfficeToSize(division, city, targetSize, upgradeSettings.waitForFunds);
+    if (!sizeChangeHappened && upgradeSettings.returnIfNoOfficeUpgrade)
         return false;
     fillEmployees(division, city);
     if (upgradeSettings.assignEmployees)
@@ -324,7 +360,7 @@ async function tryUpsizeHireAssignAllOfficesToSize(division, targetSize) {
     }
 }
 
-async function tryUpgradeWarehouseSize(division, city, targetSize) {
+async function tryUpgradeWarehouseToSize(division, city, targetSize) {
     if (!corp_.hasWarehouse(division, city)) {
         await waitForFunds(() => corp_.getPurchaseWarehouseCost(), `purchase a warehouse in ${city}`);
         corp_.purchaseWarehouse(division, city);
@@ -340,8 +376,8 @@ async function tryUpgradeWarehouseSize(division, city, targetSize) {
 
 // If `fundsFraction` < 1 || !`wait`, will purchase if immediately available or else return false.
 // Otherwise, waits for funds and returns true when complete.
-async function tryUpgradeLevel(upgrade, waitForFunds = true, fundsFraction = 1) {
-    if (fundsFraction == 1 && waitForFunds)
+async function tryUpgradeLevel(upgrade, wait = true, fundsFraction = 1) {
+    if (fundsFraction == 1 && wait)
         await waitForFunds(() => corp_.getUpgradeLevelCost(upgrade), `upgrade ${upgrade} to ${corp_.getUpgradeLevel(upgrade) + 1}`);
     else if (funds() * fundsFraction < corp_.getUpgradeLevelCost(upgrade))
         return false;
@@ -363,13 +399,18 @@ async function initialSetup() {
     // Log these functions for ease of information.
     ns_.enableLog(`ALL`);
     // TODO: Double check this.
-    if (corp() === undefined) {
+    try {
+        corp();
+    } catch (error) {
         while (ns_.getPlayer().money < 160e9) {
-            log(ns_, `Waiting for corp seed money. Have ${formatMoney(ns.getPlayer().money)}, want ${formatMoney(160e9)}`);
+            log(ns_, `Waiting for corp seed money. Have ${formatMoney(ns_.getPlayer().money)}, want ${formatMoney(160e9)}`);
             await ns_.sleep(30000);
         }
         corp_.createCorporation(kCorpName, true);
     }
+
+    if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
+        return log(ns_, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
 
     // Set up Agriculture Division
     // TODO: make sure the name matches what we want.
@@ -391,11 +432,12 @@ async function initialSetup() {
         corp_.hireAdVert(kAgricultureDivision);
     }
 
-    kCities.forEach((city) => await tryUpgradeWarehouseSize(kAgricultureDivision, city, 300));
+    for (const city of kCities)
+        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 300);
     // Start selling `Plants` and `Food` for MAX/MP
     kCities.forEach((city) => {
-        corp_.sellMaterial(kAgricultureDivision, city, `Plants`, `MAX`, `MP`, /*allCities=*/true);
-        corp_.sellMaterial(kAgricultureDivision, city, `Food`, `MAX`, `MP`, /*allCities=*/true);
+        corp_.sellMaterial(kAgricultureDivision, city, `Plants`, `MAX`, `MP`);
+        corp_.sellMaterial(kAgricultureDivision, city, `Food`, `MAX`, `MP`);
     });
 
     // === First growth round ====
@@ -439,6 +481,51 @@ async function initialSetup() {
 
     return true;
 }
+
+// /**
+//  * Do all employees have enough happiness, energy, and morale?
+//  * @param {NS} ns
+//  * @param {number} lowerLimit - minimum for all stats [0,1]
+//  * @returns {boolean}
+//  */
+//  function allEmployeesSatisfied(ns, lowerLimit = 0.9995) {
+//     let allSatisfied = true;
+//     for (const division of corp().divisions) {
+//         for (const city of division.cities) {
+//             let office = ns.corporation.getOffice(division.name, city);
+//             let employees = office.employees.map((e) => ns.corporation.getEmployee(division.name, city, e));
+//             let avgMorale = employees.map((e) => e.mor).reduce((sum, mor) => sum + mor, 0) / employees.length;
+//             let avgEnergy = employees.map((e) => e.ene).reduce((sum, ene) => sum + ene, 0) / employees.length;
+//             let avgHappiness = employees.map((e) => e.hap).reduce((sum, hap) => sum + hap, 0) / employees.length;
+//             if (avgEnergy < office.maxEne * lowerLimit || avgHappiness < office.maxHap * lowerLimit || avgMorale < office.maxMor * lowerLimit) {
+//                 allSatisfied = false;
+//                 break;
+//             }
+//         }
+//     }
+//     return allSatisfied;
+// }
+
+// /**
+//  * Spend hashes on something, as long as we have hacknet servers unlocked and a bit of money in the bank.
+//  * @param {NS} ns
+//  * @param {string} spendOn 'Sell for Corporation Funds' | 'Exchange for Corporation Research'
+//  */
+//  async function doSpendHashes(ns, spendOn) {
+//     // Make sure we have a decent amount of money ($100m) before spending hashes this way.
+//     if (ns.getPlayer().money > 100e6 && 9 in dictSourceFiles) {
+//         let spentHashes = 0;
+//         let shortName = spendOn;
+//         if (spendOn === 'Sell for Corporation Funds') shortName = '$1B of corporate funding';
+//         else if (spendOn === 'Exchange for Corporation Research') shortName = '1000 research for each corporate division';
+//         do {
+//             let numHashes = ns.hacknet.numHashes();
+//             ns.hacknet.spendHashes(spendOn);
+//             spentHashes = numHashes - ns.hacknet.numHashes();
+//             if (spentHashes > 0) log(ns, `  Spent ${nf(Math.round(spentHashes / 100) * 100)} hashes on ${shortName}`, 'success');
+//         } while (spentHashes > 0);
+//     }
+// }
 
 async function waitForHappy() {
     // (WAIT FOR HAPPINESS): I think this API might be broken, so just expect a specific offer size for now.
@@ -491,7 +578,8 @@ async function secondGrowthRound() {
 
     // (MONEY CHECK): Expect around $110b
     // (UPSIZE WAREHOUSES) Upgrade 7 times to 2k
-    kCities.forEach((city) => await tryUpgradeWarehouseSize(kAgricultureDivision, city, 2000));
+    for (const city of kCities)
+        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 2000);
 
     // (MONEY CHECK): Expect around $45b
     // (SUPPORT ITEMS) Purchase via one-tick:
@@ -523,7 +611,8 @@ async function secondGrowthRound() {
 async function thirdGrowthRound() {
     // === Third Growth Round ===
     // (UPSIZE WAREHOUSE): 9 upgrades to 3,800
-    kCities.forEach((city) => await tryUpgradeWarehouseSize(kAgricultureDivision, city, 3800));
+    for (const city of kCities)
+        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 3800);
 
     // (SUPPORT MATERIALS) Purchase via one-tick:
     const thirdRoundSupportItems = [
@@ -560,33 +649,35 @@ async function performTobaccoExpansion() {
     // Expand into `Tobacco` ($20b)
 
     // TODO search by name and type.
-    if (!corp().divisions.find(division => division.type === `Tobacco`))
+    if (!corp().divisions.find(division => division.type === `Tobacco`)) {
+        await waitForFunds(() => corp_.getExpandIndustryCost(`Tobacco`), `expand into the Tobacco industry`);
         corp_.expandIndustry(`Tobacco`, kTobaccoDivision);
+    }
 
     // Expand to `Aevum` then all other cities
     // Upgrade `Aevum` to office size 30
-    await tryUpgradeOfficeSize(kTobaccoDivision, kProductDevCity, 30);
-    await tryUpgradeWarehouseSize(kTobaccoDivision, kProductDevCity, 300);
+    await tryUpsizeHireAssignOffice(kTobaccoDivision, kProductDevCity, 30);
 
     // Upgrade all other cities to 9.
-    kCities.filter((city) => city != kProductDevCity)
-        .forEach((city) => {
-            await tryUpgradeOfficeSize(kTobaccoDivision, city, 9);
-            await tryUpgradeWarehouseSize(kTobaccoDivision, city, 300);
-        });
+    for (const city of kCities) {
+        await tryUpsizeHireAssignOffice(kTobaccoDivision, city, 9);
+        // Just make sure this is a warehouse at all.
+        await tryUpgradeWarehouseToSize(kTobaccoDivision, city, 1);
+    }
 
     // === Develop Product ===
     // Create Product in `Aevum`
     // - Name: Tobacco v1
     // - Design Investment: 1b (1,000,000,000)
     // - Marketing Investment: 1b (1,000,000,000)
-    await waitForFunds(() => 1e9, `create initial Tobacco product`);
-    corp_.makeProduct(kTobaccoDivision, kProductDevCity, `Tobacco v1`, 1e9, 1e9);
+    if (getDivision(kTobaccoDivision).products.length === 0) {    
+        await waitForFunds(() => 2e9, `create initial Tobacco product`);
+        corp_.makeProduct(kTobaccoDivision, kProductDevCity, `Tobacco v1`, 1e9, 1e9);
+    }
 
     // === First-time Loop ===
     // While funds > $3t, purchase `Wilson Analytics`
-    while (funds() > 3e12) {
-        // TODO check wilson price?
+    while (funds() > 3e12 && funds() > corp_.getUpgradeLevelCost(`Wilson Analytics`)) {
         corp_.levelUpgrade(`Wilson Analytics`);
     }
 
@@ -611,53 +702,47 @@ async function performTobaccoExpansion() {
     }
 }
 
-/**
- * 
- * @returns {Number} Highest version amongst currently produced products.
- */
 function maybeDiscontinueProduct() {
-    // TODO: Discontinue based on rating/revenue.
-    let tobaccoProducts = getDivision(kTobaccoDivision).products
-        .filter(product =>
-            product.startsWith(`Tobacco v`) && corp_.getProduct(kTobaccoDivision, product).developmentProgress >= 100
-        ).map(
-            product => product.replaceAll(/[^0-9]+/g, ``)
-        );
-    if (tobaccoProducts.length >= 3) {
-        let minItem = Math.min(...tobaccoProducts);
-        let discontinuedItem = `Tobacco v${minItem}`;
-        log(ns_, `Discontinuing product: ${discontinuedItem}`, false, `info`);
-        corp_.discontinueProduct(kTobaccoDivision, discontinuedItem);
-    }
-    return Math.max(...tobaccoProducts) || 0;;
+    const products = getProducts(kTobaccoDivision);
+    if (products.length < 3 || products.some(product => product.developmentProgress < 100))
+        return;
+
+    const discontinuedItem = products
+        // Don't discontinue products in development (they have 0 rating)
+        .filter(product => product.developmentProgress >= 100)
+        .reduce((currentMin, product) => product.rat < currentMin.rat ? product : currentMin);
+    log(ns_, `Discontinuing product: ${discontinuedItem.name}`, false, `info`);
+    corp_.discontinueProduct(kTobaccoDivision, discontinuedItem.name);
 }
 
-/**
- * 
- * @param {Number} latestVersionSuffix The highest currently in-use version suffix.
- */
-function maybeDevelopNewProduct(latestVersionSuffix) {
+function maybeDevelopNewProduct() {
+    const tobaccoProducts = 
+        getProducts(kTobaccoDivision).filter(product => product.name.startsWith(`Tobacco v`));
+
     // If not developing product, begin development
-    let isProductInDevelopment = false;
-    for (const product of getDivision(kTobaccoDivision).products) {
-        if (corp_.getProduct(kTobaccoDivision, product).developmentProgress < 100) {
-            isProductInDevelopment = true;
-            if (verbose)
-                log(ns_, `Currently developing product: ${product} at %${formatNumberShort(corp_.getProduct(kTobaccoDivision, product).developmentProgress)}`);
-            break;
-        }
-    }
+    const currentlyDevelopingProduct = tobaccoProducts.some((product) => {
+        if (verbose && product.developmentProgress < 100)
+            log(ns_, `Currently developing product: ${product.name} at %${formatNumberShort(product.developmentProgress)}`);
+        return product.developmentProgress < 100;
+    });
 
-    const name = `Tobacco ${latestVersionSuffix + 1}`;
-    if (!isProductInDevelopment) {
-        log(ns_, `Creating product ${name}.`, false, `info`);
-        corp_.makeProduct(kTobaccoDivision, kProductDevCity, name, 1e9, 1e9);
-    }
+    if (currentlyDevelopingProduct)
+        return;
+
+    let maxVersion = tobaccoProducts
+        .map(product => product.name.replaceAll(/[^0-9]+/g, ``)) // Grab version numbers
+        .map(Number) // Formally convert for intellisense
+        .reduce((max, version) => Math.max(max, version), 0); // Get the max
+    const name = `Tobacco v${maxVersion + 1}`;
+    log(ns_, `Creating product ${name}.`, false, `info`);
+    // TODO: Wait for money, if we don't have enough.
+    corp_.makeProduct(kTobaccoDivision, kProductDevCity, name, 1e9, 1e9);
 }
 
-const kLabResearchThreshold = 10e3;
-const kMarketTaResearchThreshold = 140e3;
+const kLabResearchThreshold = 10e3; // 10,000 (2x 5,000)
+const kMarketTaResearchThreshold = 140e3; // 140,000 (2x 70,000)
 function maybePurchaseResearch() {
+    const division = getDivision(kTobaccoDivision);
     const hasLab = corp_.hasResearched(kTobaccoDivision, `Hi-Tech R&D Laboratory`);
     // If >10k, purchase `Hi-Tech R&D Laboratory`
     if (!hasLab && division.research > kLabResearchThreshold) {
@@ -677,11 +762,10 @@ function maybePurchaseResearch() {
 
 async function mainTobaccoLoop() {
     while (true) {
-        await sleepWhileNotInStartState(ns_, true);
-        await doPriceDiscovery(ns_);
+        await sleepWhileNotInStartState(true);
+        await doPriceDiscovery();
         if (verbose) {
-            const corp = corp();
-            log(ns_, `Loop start funds ${formatMoney(corp.funds)}. Net: ${formatMoney(corp.revenue - corp.expenses)}/s Revenue: ${formatMoney(corp.revenue)}/s Expenses: ${formatMoney(corp.expenses)}/s`);
+            log(ns_, `Loop start funds ${formatMoney(corp().funds)}. Net: ${formatMoney(corp().revenue - corp().expenses)}/s Revenue: ${formatMoney(corp().revenue)}/s Expenses: ${formatMoney(corp().expenses)}/s`);
         }
 
         // <Product Development>
@@ -691,8 +775,8 @@ async function mainTobaccoLoop() {
         }
 
         // If necessary to make room for new development, discontinue a product.
-        const latestVersionSuffix = maybeDiscontinueProduct();
-        maybeDevelopNewProduct(latestVersionSuffix);
+        maybeDiscontinueProduct();
+        maybeDevelopNewProduct();
 
         // <Research Checks>
         // Only apply if Aevum>60 && 3 products. <-- not anymore
@@ -700,20 +784,21 @@ async function mainTobaccoLoop() {
 
         // <Spend Funds>
         // 1. Purchase `Wilson Analytics`
-        while (tryUpgradeLevel(`Wilson Analytics`, false))            
-            log(ns_, `Upgraded Wilson Analytics for ${formatMoney(corp_.getUpgradeLevelCost(`Wilson Analytics`))}`);
+        while (await tryUpgradeLevel(`Wilson Analytics`, false))            
+            log(ns_, `Upgraded Wilson Analytics to ${corp_.getUpgradeLevel(`Wilson Analytics`)}.`);
         // 2. Upgrade Aevum by 15 or buy Advert, whichever is cheaper
         const kDevOfficeUpgradeIncrement = 15;
         for (let i = 0; i < 1000; ++i) {
             const adVertCost = corp_.getHireAdVertCost(kTobaccoDivision);
             const devOfficeUpgradeCost = corp_.getOfficeSizeUpgradeCost(kTobaccoDivision, kProductDevCity, kDevOfficeUpgradeIncrement);
-            const devOfficeSize = office(kTobaccoDivision, kProductDevCity).size;
+            const devOfficeSize = getOffice(kTobaccoDivision, kProductDevCity).size;
             const devOfficeAtCapacity = devOfficeSize >= kMaxOfficeSize + 60;
+            const devOfficeAtMinCapacity = devOfficeSize >= 60;
 
-            if (funds() > adVertCost && (adVertCost < devOfficeUpgradeCost || devOfficeAtCapacity)) {
+            if (devOfficeAtMinCapacity && funds() > adVertCost && (adVertCost < devOfficeUpgradeCost || devOfficeAtCapacity)) {
                 log(ns_, `Hiring AdVert for ${formatMoney(adVertCost)}.`);
                 corp_.hireAdVert(kTobaccoDivision);
-            } else if (funds() > devOfficeUpgradeCost && devOfficeUpgradeCost < adVertCost && !devOfficeAtCapacity) {
+            } else if (funds() > devOfficeUpgradeCost && !devOfficeAtCapacity) {
                 // Upgrade office and hire employees, but we'll wait until after this loop to assign.
                 await tryUpsizeHireAssignOffice(kTobaccoDivision, kProductDevCity, devOfficeSize + kDevOfficeUpgradeIncrement,
                     {assignEmployees: false, waitForFunds: false, returnIfNoOfficeUpgrade: false});
@@ -726,12 +811,11 @@ async function mainTobaccoLoop() {
         await maybeAutoAssignEmployees(kTobaccoDivision, kProductDevCity);
 
         // Refresh devOffice in case we changed its size.
-        const maxAlternateOfficeSize = Math.min(kMaxOfficeSize, office(kTobaccoDivision, kProductDevCity).size - 60);
-        kCities.filter((city) => city != kProductDevCity)
-            .some((city) => 
-                await tryUpsizeHireAssignOffice(kTobaccoDivision, city, maxAlternateOfficeSize, 
-                    { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true })
-            );
+        const maxAlternateOfficeSize = Math.min(kMaxOfficeSize, getOffice(kTobaccoDivision, kProductDevCity).size - 60);
+        for (const city of kCities.filter((city) => city != kProductDevCity)) {
+            await tryUpsizeHireAssignOffice(kTobaccoDivision, city, maxAlternateOfficeSize,
+                { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true });
+        }
 
         // 
         // <Investment>
@@ -741,6 +825,7 @@ async function mainTobaccoLoop() {
         // Declare dividends.
 
         // TODO: Bribe Factions
+        // TODO: Maybe wait until dividends are enabled before getting these unlockables.
         for (const unlockable of [`Government Partnership`, "Shady Accounting"]) {
             if (!corp_.hasUnlockUpgrade(unlockable) &&
                 corp_.getUnlockUpgradeCost(unlockable) < funds()) {
@@ -750,8 +835,8 @@ async function mainTobaccoLoop() {
         }
         const kUpgradeFundsFraction = 0.005; // 0.5%
         for (const upgrade of upgrades) {
-            while (tryUpgradeLevel(upgrade, false, kUpgradeFundsFraction)) {
-                log(ns_, `Upgraded ${upgrade} to ${corp_.getUpgradeLevel(upgrade)} for ${formatMoney(nextUpgradeCost)}.`);
+            while (await tryUpgradeLevel(upgrade, false, kUpgradeFundsFraction)) {
+                log(ns_, `Upgraded ${upgrade} to ${corp_.getUpgradeLevel(upgrade)}.`);
             }
         }
     }
@@ -759,21 +844,34 @@ async function mainTobaccoLoop() {
 
 /** @param {NS} ns **/
 export async function main(ns) {
+    ns.tail();
     ns_ = ns;
     corp_ = ns.corporation;
+    // @ts-ignore
     const runOptions = getConfiguration(ns, argsSchema);
+    if (!runOptions || await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
     verbose = runOptions[`verbose`];
     ns.disableLog(`ALL`);
+
+    // TODO: Spend hashes on corp.
 
     // === Initial Setup ===
     // Set up Corp
     const activeSourceFiles = await getActiveSourceFiles(ns);
     if (!(3 in activeSourceFiles))
         return log(ns, "Corporations not enabled.");
+    try {
+        if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
+            return log(ns, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
+    } catch {
+        // Detected no corp.
+    }
 
-    if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
-        return log(ns, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
+    // If skipping all setup, just run the loop.
+    if (runOptions[`skip_all_setup`])
+        return mainTobaccoLoop();
 
+    // TODO: Start spending hashes on funds
     // Set up agriculture.
     if (!await initialSetup())
         return;
@@ -783,14 +881,16 @@ export async function main(ns) {
     // (TARGET CHECK IN) -> ~1.5m/s Profit
     // (INVESTOR MONEY): Accept investment offer for around $210b
     // TODO: Adjust investments for bitnode multipliers
-    await waitForInvestmentOffer(2.10e9);
+    if (corp().numShares === 1e9 && funds() < 210e9)
+        await waitForInvestmentOffer(210e9);
     await secondGrowthRound();
     // (INVESTOR MONEY): Accept investment offer for $5t
-    await waitForInvestmentOffer(5e12);
+    if (corp().numShares === 900e6 && funds() < 5e12)
+        await waitForInvestmentOffer(5e12);
     await thirdGrowthRound();
     // (MULTIPLIER CHECK): TODO: Expect Production Multiplier over 500
     await performTobaccoExpansion();
-
+    // TODO: Start spending hashes on research, stop spending on funds. (or maybe both to start?)
     //TODO: Write a file once we're set up so we can avoid all the earlier work on startup.
     await mainTobaccoLoop();
 }
