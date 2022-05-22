@@ -763,6 +763,7 @@ function maybePurchaseResearch() {
 async function mainTobaccoLoop() {
     while (true) {
         await sleepWhileNotInStartState(true);
+        await writeStats();
         await doPriceDiscovery();
         if (verbose) {
             log(ns_, `Loop start funds ${formatMoney(corp().funds)}. Net: ${formatMoney(corp().revenue - corp().expenses)}/s Revenue: ${formatMoney(corp().revenue)}/s Expenses: ${formatMoney(corp().expenses)}/s`);
@@ -840,6 +841,16 @@ async function mainTobaccoLoop() {
             }
         }
     }
+}
+
+async function writeStats() {
+    let stats = {};
+    stats.corp = corp();
+    stats.currentOffer = corp_.getInvestmentOffer();
+    stats.devProgress = Math.min(...getProducts(kTobaccoDivision).map(product => product.developmentProgress));
+
+    const kCorpStatsFile = `/Temp/corp-stats.txt`;
+    await ns_.write(kCorpStatsFile, JSON.stringify(stats), `w`);
 }
 
 /** @param {NS} ns **/

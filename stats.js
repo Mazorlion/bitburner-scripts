@@ -7,6 +7,7 @@ const argsSchema = [
     ['show-peoplekilled', false],
     ['hide-stocks', false],
     ['hide-RAM-utilization', false],
+    [`hide-corp-stats`, false],
 ];
 
 export function autocomplete(data, args) {
@@ -119,6 +120,34 @@ export async function main(ns) {
                     const bbSP = await getNsDataThroughFile(ns, 'ns.bladeburner.getSkillPoints()', '/Temp/bladeburner-getSkillPoints.txt');
                     addHud("BB Rank", formatSixSigFigs(bbRank), "Your current bladeburner rank");
                     addHud("BB SP", formatSixSigFigs(bbSP), "Your current unspent bladeburner skill points");
+                }
+            }
+            
+            if(!options[`hide-corp-stats`]) {
+                const statsContent = ns.read(`/Temp/corp-stats.txt`)
+                if (statsContent) {
+                    const corpStats = JSON.parse(statsContent);
+                    /**
+                     * @type {CorporationInfo}
+                     */
+                    const corp = corpStats.corp;
+                    addHud(`Corp Inc`, `${formatMoney(corp.revenue - corp.expenses, 3, 2)}/sec`, `Current corporation income per second.`);
+                    addHud(`Corp Funds`, `${formatMoney(corp.funds, 3, 2)}`, `Currently available corporation funds.`);
+                    addHud(`Corp DevP`, `${corpStats.devProgress.toFixed(2)}%`, `Current progress of the product in devleopment.`);
+                    if (corpStats.currentOffer) {
+                        /**
+                         * @type {InvestmentOffer}
+                         */
+                        const offer =  corpStats.currentOffer;
+                        addHud(`Corp IOff`, `${formatMoney(offer.funds, 3, 2)}`, 
+                        `Current private investment offer.\n` +
+                        `Round: ${offer.round}, Shares: ${formatNumberShort(offer.shares)}`);
+                    }
+                    addHud(`Corp Shr$`, `${formatMoney(corp.sharePrice)}`,
+                        `Total shares: ${formatNumberShort(corp.totalShares)}\n` +
+                        `Owned Shares: ${formatNumberShort(corp.numShares)}\n` +
+                        `Issued Shares: ${formatNumberShort(corp.issuedShares)}\n` +
+                        `Is Public: ${corp.public}`);
                 }
             }
 
