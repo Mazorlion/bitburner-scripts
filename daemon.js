@@ -262,7 +262,7 @@ export async function main(ns) {
         },
         {
             name: `corporation.js`, tail: true,
-            shouldrun: () => 3 in dictSourceFiles && reqRam(2024)
+            shouldrun: () => 3 in dictSourceFiles && reqRam(4048)
         },
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));
