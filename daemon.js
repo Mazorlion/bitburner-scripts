@@ -261,8 +261,8 @@ export async function main(ns) {
             shouldRun: () => 7 in dictSourceFiles && (_cachedPlayerInfo.inBladeburner || [6, 7].includes(playerBitnode))
         },
         {
-            name: `corporation.js`, tail: true,
-            shouldrun: () => 3 in dictSourceFiles && reqRam(4048)
+            name: `corporation.js`, tail: openTailWindows,
+            shouldRun: () => reqRam(4048) && 3 in dictSourceFiles
         },
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));
