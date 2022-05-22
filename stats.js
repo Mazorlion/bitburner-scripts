@@ -71,7 +71,7 @@ export async function main(ns) {
             addHud("Scr Exp", formatNumberShort(ns.getScriptExpGain(), 3, 2) + '/sec', "Total 'instantenous' hack experience per second being earned across all scripts running on all servers.");
 
             // Show reserved money
-            const reserve = Number(ns.read("reserve.txt") || 0);
+            const reserve = Number(ns.read("reserve.txt")) || 0;
             if (reserve > 0) // Bitburner bug: Trace amounts of share power sometimes left over after we stop sharing
                 addHud("Reserve", formatNumberShort(reserve, 3, 2), "Most scripts will leave this much money unspent. Remove with `run reserve.js 0`");
 
@@ -119,6 +119,51 @@ export async function main(ns) {
                     const bbSP = await getNsDataThroughFile(ns, 'ns.bladeburner.getSkillPoints()', '/Temp/bladeburner-getSkillPoints.txt');
                     addHud("BB Rank", formatSixSigFigs(bbRank), "Your current bladeburner rank");
                     addHud("BB SP", formatSixSigFigs(bbSP), "Your current unspent bladeburner skill points");
+                }
+            }
+            
+            if(!options[`hide-corp-stats`]) {                
+                const isValid = (fileContents) => {
+                    const kOneMinute = 1000 * 60;
+                    return fileContents && Date.now() - JSON.parse(fileContents).timestamp < kOneMinute;
+                }
+                const statsContent = ns.read(`/Temp/corp-stats.txt`);
+                if (isValid(statsContent)) {
+                    const corpStats = JSON.parse(statsContent);
+                    addSectionDivider();
+                    /**
+                     * @type {CorporationInfo}
+                     */
+                    const corp = corpStats.corp;
+                    /**
+                     * @type {Division}
+                     */
+                    const division = corpStats.division;
+                    addHud(`Corp Inc`, `${formatMoney(corp.revenue - corp.expenses, 3, 2)}/sec`, 
+                        `Current corporation income per second.\n` +
+                        `Revenue: ${formatMoney(corp.revenue, 3, 2)}\n` +
+                        `Expenses: ${formatMoney(corp.expenses, 3, 2)}`);
+                    addHud(`Corp Funds`, `${formatMoney(corp.funds, 3, 2)}`, 
+                        `Currently available corporation funds.`);
+                    addHud(`Corp DevP`, `${corpStats.devProgress.toFixed(2)}%`, 
+                        `Progress of product development.\n` + 
+                        `Divison Research: ${formatNumberShort(division.research)}\n` +
+                        `Has Lab: ${corpStats.hasLab}\n` +
+                        `Has Market-TA.II: ${corpStats.hasMarketTa}`);
+                    if (!corp.public && corpStats.currentOffer) {
+                        /**
+                         * @type {InvestmentOffer}
+                         */
+                        const offer =  corpStats.currentOffer;
+                        addHud(`Corp IOff`, `${formatMoney(offer.funds, 3, 2)}`, 
+                        `Current private investment offer.\n` +
+                        `Round: ${offer.round}, Shares: ${formatNumberShort(offer.shares)}`);
+                    }
+                    addHud(`Corp Shr$`, `${formatMoney(corp.sharePrice)}`,
+                        `Total shares: ${formatNumberShort(corp.totalShares)}\n` +
+                        `Owned Shares: ${formatNumberShort(corp.numShares)}\n` +
+                        `Issued Shares: ${formatNumberShort(corp.issuedShares)}\n` +
+                        `Is Public: ${corp.public}`);
                 }
             }
 
