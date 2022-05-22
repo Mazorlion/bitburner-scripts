@@ -255,6 +255,87 @@ async function waitForInvestmentOffer(minOffer, sleepDuration = 15000) {
     corp_.acceptInvestmentOffer();
 }
 
+// async function trickInvest(ns, division, productCity = "Sector-12") {
+// 	ns.print("Prepare to trick investors")
+// 	for (var product of division.products) {
+// 		// stop selling products
+// 		ns.corporation.sellProduct(division.name, productCity, product, "0", "MP", true);
+// 	}
+
+// 	for (const city of cities) {
+// 		// put all employees into production to produce as fast as possible 
+// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
+
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Engineer", 0);
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Management", 0);
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Research & Development", 0);
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees - 2); // workaround for bug
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees - 1); // workaround for bug
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees);
+// 	}
+
+// 	ns.print("Wait for warehouses to fill up")
+// 	//ns.print("Warehouse usage: " + refWarehouse.sizeUsed + " of " + refWarehouse.size);
+// 	let allWarehousesFull = false;
+// 	while (!allWarehousesFull) {
+// 		allWarehousesFull = true;
+// 		for (const city of cities) {
+// 			if (ns.corporation.getWarehouse(division.name, city).sizeUsed <= (0.98 * ns.corporation.getWarehouse(division.name, city).size)) {
+// 				allWarehousesFull = false;
+// 				break;
+// 			}
+// 		}
+// 		await ns.sleep(5000);
+// 	}
+// 	ns.print("Warehouses are full, start selling");
+
+// 	var initialInvestFunds = ns.corporation.getInvestmentOffer().funds;
+// 	ns.print("Initial investmant offer: " + ns.nFormat(initialInvestFunds, "0.0a"));
+// 	for (const city of cities) {
+// 		// put all employees into business to sell as much as possible 
+// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 0);
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees - 2); // workaround for bug
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees - 1); // workaround for bug
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees);
+// 	}
+// 	for (var product of division.products) {
+// 		// sell products again
+// 		ns.corporation.sellProduct(division.name, productCity, product, "MAX", "MP", true);
+// 	}
+
+// 	while (ns.corporation.getInvestmentOffer().funds < (4 * initialInvestFunds)) {
+// 		// wait until the stored products are sold, which should lead to huge investment offers
+// 		await ns.sleep(200);
+// 	}
+
+// 	ns.print("Investment offer for 10% shares: " + ns.nFormat(ns.corporation.getInvestmentOffer().funds, "0.0a"));
+// 	ns.print("Funds before public: " + ns.nFormat(ns.corporation.getCorporation().funds, "0.0a"));
+
+// 	ns.corporation.goPublic(800e6);
+
+// 	ns.print("Funds after  public: " + ns.nFormat(ns.corporation.getCorporation().funds, "0.0a"));
+
+// 	for (const city of cities) {
+// 		// set employees back to normal operation
+// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
+// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", 0);
+// 		if (city == productCity) {
+// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 1);
+// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Engineer", (employees - 2));
+// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Management", 1);
+// 		}
+// 		else {
+// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 1);
+// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Research & Development", (employees - 1));
+// 		}
+// 	}
+
+// 	// with gained money, expand to the most profitable division
+// 	ns.corporation.expandIndustry("Healthcare", "Healthcare");
+// 	await initCities(ns, ns.corporation.getCorporation().divisions[1]);
+// }
+
 async function maybeExpandCity(division, city, wait = true) {
     if (getDivision(division).cities.includes(city))
         return;
@@ -529,36 +610,6 @@ async function initialSetup() {
 // }
 
 async function waitForHappy() {
-    // (WAIT FOR HAPPINESS): I think this API might be broken, so just expect a specific offer size for now.
-    // let happy = false;
-    // while (!happy) {
-    //     await sleepWhileNotInStartState(ns_, true);
-    //     happy = true;
-    //     for (const city of cities) {
-    //         const office = office(agricultureDivisionName, city);
-    //         // - Morale 100.0
-    //         const morale = office.maxMor;
-    //         if (morale < 100) {
-    //             log(ns_, `Waiting for ${city} due to morale. At ${morale}, need 100.`);
-    //             happy = false;
-    //             break;
-    //         }
-    //         // - Energy at least 99.998
-    //         const energy = office.maxEne;
-    //         if (energy < 99.998) {
-    //             log(ns_, `Waiting for ${city} due to energy. At ${energy}, need 99.998.`);
-    //             happy = false;
-    //             break;
-    //         }
-    //         // - Happiness at least 99.998
-    //         const happiness = office.maxHap;
-    //         if (happiness < 99.998) {
-    //             log(ns_, `Waiting for ${city} due to happiness. At ${happiness}, need 99.998.`);
-    //             happy = false;
-    //             break;
-    //         }
-    //     }
-    // }
     // log(ns_, "Employees are happy, continuing with setup.");
     return true;
 }
@@ -830,7 +881,7 @@ async function mainTobaccoLoop() {
         // TODO: Maybe wait until dividends are enabled before getting these unlockables.
         for (const unlockable of [`Government Partnership`, "Shady Accounting"]) {
             if (!corp_.hasUnlockUpgrade(unlockable) &&
-                corp_.getUnlockUpgradeCost(unlockable) < funds()) {
+                corp_.getUnlockUpgradeCost(unlockable) * 2 < funds()) {
                 corp_.unlockUpgrade(unlockable);
                 log(ns_, `Unlocking one-time upgrade ${unlockable}.`, false, `success`);
             }
