@@ -5,19 +5,23 @@ import {
 let options = null; // The options used at construction time
 const argsSchema = [ // The set of all command line arguments
     ['verbose', true], // Should the script print debug logging.
-    ['skip_all_setup', false], // Should we just jump straight to the loop?
+    ['skip-all-setup', false], // Should we just jump straight to the loop?
+    [`max-office-size`, 1000], // Cap size of offices for game performance.
 ];
 export function autocomplete(data, args) {
     data.flags(argsSchema);
     return [];
 }
 
+// args
+let verbose;
+let maxOfficeSize;
+
 const kCorpName = `Hemmy`;
 const kAgricultureDivision = `Ag`;
 const kTobaccoDivision = `Tobacco`;
 const kCities = [`Aevum`, `Chongqing`, `Sector-12`, `New Tokyo`, `Ishima`, `Volhaven`];
 const kProductDevCity = `Aevum`;
-const kMaxOfficeSize = 1000;
 
 const upgrades = [
     `Wilson Analytics`,
@@ -78,9 +82,6 @@ let getOffice = (division, city) => corp_.getOffice(division, city);
  * @returns {Number}
  */
 let numEmployees = (division, city) => getOffice(division, city).employees.length;
-
-// args
-let verbose;
 
 async function sleepWhileNotInStartState(waitForNext = false) {
     let corporation = corp();
@@ -793,7 +794,7 @@ async function mainTobaccoLoop() {
             const adVertCost = corp_.getHireAdVertCost(kTobaccoDivision);
             const devOfficeUpgradeCost = corp_.getOfficeSizeUpgradeCost(kTobaccoDivision, kProductDevCity, kDevOfficeUpgradeIncrement);
             const devOfficeSize = getOffice(kTobaccoDivision, kProductDevCity).size;
-            const devOfficeAtCapacity = devOfficeSize >= kMaxOfficeSize + 60;
+            const devOfficeAtCapacity = devOfficeSize >= maxOfficeSize + 60;
             const devOfficeAtMinCapacity = devOfficeSize >= 60;
 
             if (devOfficeAtMinCapacity && funds() > adVertCost && (adVertCost < devOfficeUpgradeCost || devOfficeAtCapacity)) {
@@ -812,7 +813,7 @@ async function mainTobaccoLoop() {
         await maybeAutoAssignEmployees(kTobaccoDivision, kProductDevCity);
 
         // Refresh devOffice in case we changed its size.
-        const maxAlternateOfficeSize = Math.min(kMaxOfficeSize, getOffice(kTobaccoDivision, kProductDevCity).size - 60);
+        const maxAlternateOfficeSize = Math.min(maxOfficeSize, getOffice(kTobaccoDivision, kProductDevCity).size - 60);
         for (const city of kCities.filter((city) => city != kProductDevCity)) {
             await tryUpsizeHireAssignOffice(kTobaccoDivision, city, maxAlternateOfficeSize,
                 { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true });
@@ -836,9 +837,8 @@ async function mainTobaccoLoop() {
         }
         const kUpgradeFundsFraction = 0.005; // 0.5%
         for (const upgrade of upgrades) {
-            while (await tryUpgradeLevel(upgrade, false, kUpgradeFundsFraction)) {
+            while(await tryUpgradeLevel(upgrade, false, kUpgradeFundsFraction))
                 log(ns_, `Upgraded ${upgrade} to ${corp_.getUpgradeLevel(upgrade)}.`);
-            }
         }
     }
 }
@@ -866,6 +866,7 @@ export async function main(ns) {
     const runOptions = getConfiguration(ns, argsSchema);
     if (!runOptions || await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
     verbose = runOptions[`verbose`];
+    maxOfficeSize = runOptions[`max-office-size`];
     ns.disableLog(`ALL`);
 
     // TODO: Spend hashes on corp.
@@ -883,7 +884,7 @@ export async function main(ns) {
     }
 
     // If skipping all setup, just run the loop.
-    if (runOptions[`skip_all_setup`])
+    if (runOptions[`skip-all-setup`])
         return mainTobaccoLoop();
 
     // TODO: Start spending hashes on funds
