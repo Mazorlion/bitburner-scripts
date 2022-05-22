@@ -43,6 +43,7 @@ export async function main(ns) {
     if (options['at-hack-level']) player.hacking = options['at-hack-level'];
     var servers = serverNames.map(ns.getServer);
     // Compute the total RAM available to us on all servers (e.g. for running hacking scripts)
+    // TODO: Account for home reserved RAM.
     var ram_total = servers.reduce(function (total, server) {
         if (!server.hasAdminRights || (server.hostname.startsWith('hacknet') && !options['include-hacknet-ram'])) return total;
         return total + server.maxRam;
@@ -50,7 +51,7 @@ export async function main(ns) {
 
     // Helper to compute server gain/exp rates at a specific hacking level
     function getRatesAtHackLevel(server, player, hackLevel) {
-        // Assume we will have wekened the server to min-security and taken it to max money before targetting
+        // Assume we will have weakened the server to min-security and taken it to max money before targetting
         server.hackDifficulty = server.minDifficulty;
         server.moneyAvailable = server.moneyMax;
         // Temporarily change the hack level on the player object to the requested level
@@ -65,7 +66,7 @@ export async function main(ns) {
             // Compute the growth and hack gain rates
             const growGain = Math.log(ns.formulas.hacking.growPercent(server, 1, player, 1));
             const hackGain = ns.formulas.hacking.hackPercent(server, player);
-            server.estHackPercent = Math.min(0.98, Math.min(ram_total * hackGain / hackCost, 1 - 1 / Math.exp(ram_total * growGain / growCost))); // TODO: I think these might be off by a factor of 2x
+            server.estHackPercent = Math.min(0.98, ram_total * hackGain / hackCost, 1 - 1 / Math.exp(ram_total * growGain / growCost)); // TODO: I think these might be off by a factor of 2x
             if (use_est_hack_percent) hack_percent = server.estHackPercent;
             const grows_per_cycle = -Math.log(1 - hack_percent) / growGain;
             const hacks_per_cycle = hack_percent / hackGain;
