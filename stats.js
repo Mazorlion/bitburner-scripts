@@ -127,18 +127,34 @@ export async function main(ns) {
                 }
             }
             
-            if(!options[`hide-corp-stats`]) {
-                const statsContent = ns.read(`/Temp/corp-stats.txt`)
-                if (statsContent) {
-                    addSectionDivider();
+            if(!options[`hide-corp-stats`]) {                
+                const isValid = (fileContents) => {
+                    const kOneMinute = 1000 * 60;
+                    return fileContents && Date.now() - JSON.parse(fileContents).timestamp < kOneMinute;
+                }
+                const statsContent = ns.read(`/Temp/corp-stats.txt`);
+                if (isValid(statsContent)) {
                     const corpStats = JSON.parse(statsContent);
+                    addSectionDivider();
                     /**
                      * @type {CorporationInfo}
                      */
                     const corp = corpStats.corp;
-                    addHud(`Corp Inc`, `${formatMoney(corp.revenue - corp.expenses, 3, 2)}/sec`, `Current corporation income per second.`);
-                    addHud(`Corp Funds`, `${formatMoney(corp.funds, 3, 2)}`, `Currently available corporation funds.`);
-                    addHud(`Corp DevP`, `${corpStats.devProgress.toFixed(2)}%`, `Current progress of the product in devleopment.`);
+                    /**
+                     * @type {Division}
+                     */
+                    const division = corpStats.division;
+                    addHud(`Corp Inc`, `${formatMoney(corp.revenue - corp.expenses, 3, 2)}/sec`, 
+                        `Current corporation income per second.\n` +
+                        `Revenue: ${formatMoney(corp.revenue, 3, 2)}\n` +
+                        `Expenses: ${formatMoney(corp.expenses, 3, 2)}`);
+                    addHud(`Corp Funds`, `${formatMoney(corp.funds, 3, 2)}`, 
+                        `Currently available corporation funds.`);
+                    addHud(`Corp DevP`, `${corpStats.devProgress.toFixed(2)}%`, 
+                        `Progress of product development.\n` + 
+                        `Divison Research: ${formatNumberShort(division.research)}\n` +
+                        `Has Lab: ${corpStats.hasLab}\n` +
+                        `Has Market-TA.II: ${corpStats.hasMarketTa}`);
                     if (corpStats.currentOffer) {
                         /**
                          * @type {InvestmentOffer}

@@ -845,9 +845,13 @@ async function mainTobaccoLoop() {
 
 async function writeStats() {
     let stats = {};
+    stats.timestamp = Date.now();
     stats.corp = corp();
     stats.currentOffer = corp_.getInvestmentOffer();
     stats.devProgress = Math.min(...getProducts(kTobaccoDivision).map(product => product.developmentProgress));
+    stats.division = getDivision(kTobaccoDivision);
+    stats.hasLab = corp_.hasResearched(kTobaccoDivision, `Hi-Tech R&D Laboratory`);
+    stats.hasMarketTa = corp_.hasResearched(kTobaccoDivision, `Market-TA.II`);
 
     const kCorpStatsFile = `/Temp/corp-stats.txt`;
     await ns_.write(kCorpStatsFile, JSON.stringify(stats), `w`);
