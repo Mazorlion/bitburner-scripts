@@ -922,12 +922,13 @@ async function mainTobaccoLoop() {
         // Declare dividends.
 
         // TODO: Bribe Factions
-        // TODO: Maybe wait until dividends are enabled before getting these unlockables.
-        for (const unlockable of [`Government Partnership`, "Shady Accounting"]) {
-            if (!corp_.hasUnlockUpgrade(unlockable) &&
-                corp_.getUnlockUpgradeCost(unlockable) * 2 < funds()) {
-                corp_.unlockUpgrade(unlockable);
-                log(ns_, `Unlocking one-time upgrade ${unlockable}.`, false, `success`);
+        if (corp().public) {
+            for (const unlockable of [`Government Partnership`, "Shady Accounting"]) {
+                if (!corp_.hasUnlockUpgrade(unlockable) &&
+                    corp_.getUnlockUpgradeCost(unlockable) * 2 < funds()) {
+                    corp_.unlockUpgrade(unlockable);
+                    log(ns_, `Unlocking one-time upgrade ${unlockable}.`, false, `success`);
+                }
             }
         }
         // Upgrades by the fraction we're willing to spend on them.
