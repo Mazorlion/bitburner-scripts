@@ -7,6 +7,7 @@ const argsSchema = [ // The set of all command line arguments
     ['verbose', true], // Should the script print debug logging.
     ['skip-all-setup', false], // Should we just jump straight to the loop?
     [`max-office-size`, 1000], // Cap size of offices for game performance.
+    [`simulate-investor-trick`, false],
 ];
 export function autocomplete(data, args) {
     data.flags(argsSchema);
@@ -83,6 +84,10 @@ let getOffice = (division, city) => corp_.getOffice(division, city);
  */
 let numEmployees = (division, city) => getOffice(division, city).employees.length;
 
+/**
+ * 
+ * @param {Boolean} waitForNext If currently in a START state, will sleep until the next one if true.
+ */
 async function sleepWhileNotInStartState(waitForNext = false) {
     let corporation = corp();
     if (waitForNext) {
@@ -126,7 +131,7 @@ async function purchaseInOneTick(items) {
         const item = pair.item;
         const targetRate = calculateOneTickPurchaseRate(corp_.getMaterial(kAgricultureDivision, city, item.name), item.targetQuantity);
         if (targetRate <= 0) {
-            log(ns_, `Not purchasing ${item.name} because we already have sufficient in the warehouse.`);
+            // log(ns_, `Not purchasing ${item.name} because we already have sufficient in the warehouse.`);
             return;
         }
         needPurchase = true;
@@ -255,86 +260,117 @@ async function waitForInvestmentOffer(minOffer, sleepDuration = 15000) {
     corp_.acceptInvestmentOffer();
 }
 
-// async function trickInvest(ns, division, productCity = "Sector-12") {
-// 	ns.print("Prepare to trick investors")
-// 	for (var product of division.products) {
-// 		// stop selling products
-// 		ns.corporation.sellProduct(division.name, productCity, product, "0", "MP", true);
-// 	}
+/**
+ * 
+ * @param {String} division 
+ * @param {String} amount
+ */
+function setSelling(division, amount) {
+    if (division === kAgricultureDivision) {
+        for (const city of kCities) {
+            // Only do these two for now.
+            for (const material of [`Food`, `Plants`])
+                corp_.sellMaterial(division, city, material, amount, `MP`); 
+        }
+    } else if (division === kTobaccoDivision) {
+        // TODO: Figure out how to price this properly. (Remember price?)
+        log(ns_, `Tick selling is currently disabled for Tobacco.`);
+        return; // Disable Tobacco for now.
+        // Main loop will fix prices here if TA.II isn't enabled.
+        for (const city of kCities) {
+            for (const product of getDivision(division).products)
+                corp_.sellProduct(division, city, product, amount, `MP`, false); 
+        }
+    } else {
+        log(ns_, `Unknown division ${division}. change selling status.`);
+        return;
+    }
+}
 
-// 	for (const city of cities) {
-// 		// put all employees into production to produce as fast as possible 
-// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
+/**
+ * 
+ * @param {String} division 
+ * @param {boolean} acceptInvestment If true, will actually accept a large enough investment.
+ */
+async function trickInvest(division = kAgricultureDivision, acceptInvestment = true) {
+    log(ns_, `Preparing to trick investors.`);
+    // Wait for happy employees to maximize productivity.
+    await waitForHappy(division);
 
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Engineer", 0);
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Management", 0);
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Research & Development", 0);
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees - 2); // workaround for bug
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees - 1); // workaround for bug
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", employees);
-// 	}
+    // Grab the initial offer before we mess with our sales.
+	const initialInvestFunds = corp_.getInvestmentOffer().funds;
+    const initialSharePrice = corp().sharePrice;
+    log(ns_, `Initial investment offer:${formatMoney(initialInvestFunds)}`);
+    // Stop selling.
+    setSelling(division, `0`);
 
-// 	ns.print("Wait for warehouses to fill up")
-// 	//ns.print("Warehouse usage: " + refWarehouse.sizeUsed + " of " + refWarehouse.size);
-// 	let allWarehousesFull = false;
-// 	while (!allWarehousesFull) {
-// 		allWarehousesFull = true;
-// 		for (const city of cities) {
-// 			if (ns.corporation.getWarehouse(division.name, city).sizeUsed <= (0.98 * ns.corporation.getWarehouse(division.name, city).size)) {
-// 				allWarehousesFull = false;
-// 				break;
-// 			}
-// 		}
-// 		await ns.sleep(5000);
-// 	}
-// 	ns.print("Warehouses are full, start selling");
+	for (const city of kCities) {
+		// put all employees into production to produce as fast as possible 
+		const employees = numEmployees(division, city);
+		
+		await corp_.setAutoJobAssignment(division, city, "Management", 0);
+		await corp_.setAutoJobAssignment(division, city, "Research & Development", 0);
+        // TODO: It's possible setting operations here is fine and just engineer before we sell.
+		await corp_.setAutoJobAssignment(division, city, "Operations", 0);        
+		await corp_.setAutoJobAssignment(division, city, "Business", 0);
+        await corp_.setAutoJobAssignment(division, city, "Engineer", employees);
+	}
 
-// 	var initialInvestFunds = ns.corporation.getInvestmentOffer().funds;
-// 	ns.print("Initial investmant offer: " + ns.nFormat(initialInvestFunds, "0.0a"));
-// 	for (const city of cities) {
-// 		// put all employees into business to sell as much as possible 
-// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 0);
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees - 2); // workaround for bug
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees - 1); // workaround for bug
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", employees);
-// 	}
-// 	for (var product of division.products) {
-// 		// sell products again
-// 		ns.corporation.sellProduct(division.name, productCity, product, "MAX", "MP", true);
-// 	}
+    log(ns_, `Waiting for warehouses to fill up`);
+	let allWarehousesFull = false;
+	while (!allWarehousesFull) {
+		allWarehousesFull = true;
+		for (const city of kCities) {
+			if (corp_.getWarehouse(division, city).sizeUsed <= (0.98 * corp_.getWarehouse(division, city).size)) {
+                if (verbose)
+                    log(ns_, `Waiting for ${city} to be full. Currently at: ` +
+                        `${((corp_.getWarehouse(division, city).sizeUsed / (0.98 * corp_.getWarehouse(division, city).size)) * 100).toFixed(2)}%`);
+				allWarehousesFull = false;
+				break;
+			}
+		}
+		await ns_.sleep(5000);
+	}
 
-// 	while (ns.corporation.getInvestmentOffer().funds < (4 * initialInvestFunds)) {
-// 		// wait until the stored products are sold, which should lead to huge investment offers
-// 		await ns.sleep(200);
-// 	}
+	log(ns_, `Warehouses are full; reassign employees for profit cycle.`);
+    // TODO: Theoretically waiting for us to finish production then move all to business is probably correct.
+	for (const city of kCities) {
+		// put all employees into business to sell as much as possible 
+		const employees = numEmployees(division, city);
+        const business = Math.floor(employees/3);
+		await corp_.setAutoJobAssignment(division, city, "Engineer", employees - business);
+		await corp_.setAutoJobAssignment(division, city, "Business", business);
+	}
 
-// 	ns.print("Investment offer for 10% shares: " + ns.nFormat(ns.corporation.getInvestmentOffer().funds, "0.0a"));
-// 	ns.print("Funds before public: " + ns.nFormat(ns.corporation.getCorporation().funds, "0.0a"));
+    // Resume selling.
+    log(ns_, `Employees assigned, waiting for START then we'll begin selling.`);
+    await sleepWhileNotInStartState(false);
+    setSelling(division, `MAX`);
 
-// 	ns.corporation.goPublic(800e6);
+    const kAcceptableFundsMultiplier = 6;
+	while (corp_.getInvestmentOffer().funds < (kAcceptableFundsMultiplier * initialInvestFunds)) {
+		await ns_.sleep(200);
+        if (verbose) {
+            log(ns_, `Waiting for funds to peak. Current:${formatMoney(corp_.getInvestmentOffer().funds)} ` + 
+                `Target: ${formatMoney(initialInvestFunds * kAcceptableFundsMultiplier)}`)                
+            log(ns_, `Waiting. Share price change: ${formatMoney(initialSharePrice)} -> ${formatMoney(corp().sharePrice)}`);
+        }
+	}
 
-// 	ns.print("Funds after  public: " + ns.nFormat(ns.corporation.getCorporation().funds, "0.0a"));
+    const investmentOffer = corp_.getInvestmentOffer();
+    log(ns_, `Investment offer for ${((investmentOffer.shares / corp().totalShares)*100).toFixed(2)}% shares: ${formatMoney(investmentOffer.funds)}`);
+    log(ns_, `Share price change: ${formatMoney(initialSharePrice)} -> ${formatMoney(corp().sharePrice)}`);
+    // Accept the offer.
+    if (acceptInvestment)
+        corp_.acceptInvestmentOffer();
+    // TODO: Consider doing it with shares just on the first round.
+	// corp_.goPublic(800e6);
 
-// 	for (const city of cities) {
-// 		// set employees back to normal operation
-// 		const employees = ns.corporation.getOffice(division.name, city).employees.length;
-// 		await ns.corporation.setAutoJobAssignment(division.name, city, "Business", 0);
-// 		if (city == productCity) {
-// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 1);
-// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Engineer", (employees - 2));
-// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Management", 1);
-// 		}
-// 		else {
-// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Operations", 1);
-// 			await ns.corporation.setAutoJobAssignment(division.name, city, "Research & Development", (employees - 1));
-// 		}
-// 	}
-
-// 	// with gained money, expand to the most profitable division
-// 	ns.corporation.expandIndustry("Healthcare", "Healthcare");
-// 	await initCities(ns, ns.corporation.getCorporation().divisions[1]);
-// }
+	for (const city of kCities) {
+        // Force rebalance employees.
+        await maybeAutoAssignEmployees(division, city, true);
+	}
+}
 
 async function maybeExpandCity(division, city, wait = true) {
     if (getDivision(division).cities.includes(city))
@@ -365,15 +401,16 @@ function fillEmployees(division, city) {
  * 
  * @param {String} division 
  * @param {String} city 
+ * @param {Boolean} forceAssign Should we force-reassign even if all employees have jobs
  * @returns 
  */
-async function maybeAutoAssignEmployees(division, city) {
+async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
     const employeeJobs = getOffice(division, city).employeeJobs;
     const assigned = [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`].reduce((sum, job) => sum + employeeJobs[job]);
     const employees = numEmployees(division, city);
     // All employees working, nothing to do.
     // @ts-ignore
-    if (assigned === employees && employeeJobs.Unassigned === 0)
+    if (!forceAssign && assigned === employees && employeeJobs.Unassigned === 0)
         return;
 
     // Special case 9
@@ -484,15 +521,21 @@ async function initialSetup() {
     try {
         corp();
     } catch (error) {
-        while (ns_.getPlayer().money < 160e9) {
-            log(ns_, `Waiting for corp seed money. Have ${formatMoney(ns_.getPlayer().money)}, want ${formatMoney(160e9)}`);
-            await ns_.sleep(30000);
+        if (ns_.getPlayer().money < 160e9) {
+            log(ns_, `No corp active, need seed money. Have ${formatMoney(ns_.getPlayer().money)}, want ${formatMoney(160e9)}`);
+            return false;
         }
+        // while (ns_.getPlayer().money < 160e9) {
+        //     log(ns_, `Waiting for corp seed money. Have ${formatMoney(ns_.getPlayer().money)}, want ${formatMoney(160e9)}`);
+        //     await ns_.sleep(30000);
+        // }
         corp_.createCorporation(kCorpName, true);
     }
 
-    if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
-        return log(ns_, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
+    if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`)) {
+        log(ns_, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
+        return false;
+    }
 
     // Set up Agriculture Division
     // TODO: make sure the name matches what we want.
@@ -564,29 +607,27 @@ async function initialSetup() {
     return true;
 }
 
-// /**
-//  * Do all employees have enough happiness, energy, and morale?
-//  * @param {NS} ns
-//  * @param {number} lowerLimit - minimum for all stats [0,1]
-//  * @returns {boolean}
-//  */
-//  function allEmployeesSatisfied(ns, lowerLimit = 0.9995) {
-//     let allSatisfied = true;
-//     for (const division of corp().divisions) {
-//         for (const city of division.cities) {
-//             let office = ns.corporation.getOffice(division.name, city);
-//             let employees = office.employees.map((e) => ns.corporation.getEmployee(division.name, city, e));
-//             let avgMorale = employees.map((e) => e.mor).reduce((sum, mor) => sum + mor, 0) / employees.length;
-//             let avgEnergy = employees.map((e) => e.ene).reduce((sum, ene) => sum + ene, 0) / employees.length;
-//             let avgHappiness = employees.map((e) => e.hap).reduce((sum, hap) => sum + hap, 0) / employees.length;
-//             if (avgEnergy < office.maxEne * lowerLimit || avgHappiness < office.maxHap * lowerLimit || avgMorale < office.maxMor * lowerLimit) {
-//                 allSatisfied = false;
-//                 break;
-//             }
-//         }
-//     }
-//     return allSatisfied;
-// }
+/**
+ * Do all employees have enough happiness, energy, and morale?
+ * @param {string} division
+ * @param {number} lowerLimit - minimum for all stats [0,1]
+ * @returns {boolean}
+ */
+function allEmployeesSatisfied(division = kAgricultureDivision, lowerLimit = 0.99998) {
+    let allSatisfied = true;
+    for (const city of getDivision(division).cities) {
+        let office = getOffice(division, city);
+        let employees = office.employees.map((e) => corp_.getEmployee(division, city, e));
+        let avgMorale = employees.map((e) => e.mor).reduce((sum, mor) => sum + mor, 0) / employees.length;
+        let avgEnergy = employees.map((e) => e.ene).reduce((sum, ene) => sum + ene, 0) / employees.length;
+        let avgHappiness = employees.map((e) => e.hap).reduce((sum, hap) => sum + hap, 0) / employees.length;
+        if (avgEnergy < office.maxEne * lowerLimit || avgHappiness < office.maxHap * lowerLimit || avgMorale < office.maxMor * lowerLimit) {
+            allSatisfied = false;
+            break;
+        }
+    }
+    return allSatisfied;
+}
 
 // /**
 //  * Spend hashes on something, as long as we have hacknet servers unlocked and a bit of money in the bank.
@@ -609,9 +650,12 @@ async function initialSetup() {
 //     }
 // }
 
-async function waitForHappy() {
-    // log(ns_, "Employees are happy, continuing with setup.");
-    return true;
+async function waitForHappy(division = kAgricultureDivision) {
+    while (!allEmployeesSatisfied(division)) {
+        log(ns_, `Waiting for employees to be happy.`);
+        await ns_.sleep(5000);
+    }
+    log(ns_, "Employees are happy, continuing with setup.");
 }
 
 async function secondGrowthRound() {
@@ -920,6 +964,12 @@ export async function main(ns) {
     maxOfficeSize = runOptions[`max-office-size`];
     ns.disableLog(`ALL`);
 
+    // Simulate trick investing.
+    if (runOptions[`simulate-investor-trick`]) {
+        await trickInvest(kAgricultureDivision, false);
+        return;
+    }
+
     // TODO: Spend hashes on corp.
 
     // === Initial Setup ===
@@ -949,11 +999,11 @@ export async function main(ns) {
     // (INVESTOR MONEY): Accept investment offer for around $210b
     // TODO: Adjust investments for bitnode multipliers
     if (corp().numShares === 1e9 && funds() < 210e9)
-        await waitForInvestmentOffer(210e9);
+        await trickInvest(kAgricultureDivision);
     await secondGrowthRound();
     // (INVESTOR MONEY): Accept investment offer for $5t
     if (corp().numShares === 900e6 && funds() < 5e12)
-        await waitForInvestmentOffer(5e12);
+        await trickInvest(kAgricultureDivision);
     await thirdGrowthRound();
     // (MULTIPLIER CHECK): TODO: Expect Production Multiplier over 500
     await performTobaccoExpansion();
