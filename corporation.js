@@ -1,5 +1,5 @@
 import {
-    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, instanceCount, log
+    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, getFilePath, instanceCount, log
 } from './helpers.js';
 
 let options = null; // The options used at construction time
@@ -8,6 +8,7 @@ const argsSchema = [ // The set of all command line arguments
     ['skip-all-setup', false], // Should we just jump straight to the loop?
     [`max-office-size`, 1000], // Cap size of offices for game performance.
     [`simulate-investor-trick`, false],
+    [`disable-spending-hashes`, false], // If true, will not start spend-hashes.
 ];
 export function autocomplete(data, args) {
     data.flags(argsSchema);
@@ -17,6 +18,9 @@ export function autocomplete(data, args) {
 // args
 let verbose;
 let maxOfficeSize;
+let disableHashes;
+
+let activeSourceFiles_;
 
 const kCorpName = `Hemmy`;
 const kAgricultureDivision = `Ag`;
@@ -629,27 +633,6 @@ function allEmployeesSatisfied(division = kAgricultureDivision, lowerLimit = 0.9
     return allSatisfied;
 }
 
-// /**
-//  * Spend hashes on something, as long as we have hacknet servers unlocked and a bit of money in the bank.
-//  * @param {NS} ns
-//  * @param {string} spendOn 'Sell for Corporation Funds' | 'Exchange for Corporation Research'
-//  */
-//  async function doSpendHashes(ns, spendOn) {
-//     // Make sure we have a decent amount of money ($100m) before spending hashes this way.
-//     if (ns.getPlayer().money > 100e6 && 9 in dictSourceFiles) {
-//         let spentHashes = 0;
-//         let shortName = spendOn;
-//         if (spendOn === 'Sell for Corporation Funds') shortName = '$1B of corporate funding';
-//         else if (spendOn === 'Exchange for Corporation Research') shortName = '1000 research for each corporate division';
-//         do {
-//             let numHashes = ns.hacknet.numHashes();
-//             ns.hacknet.spendHashes(spendOn);
-//             spentHashes = numHashes - ns.hacknet.numHashes();
-//             if (spentHashes > 0) log(ns, `  Spent ${nf(Math.round(spentHashes / 100) * 100)} hashes on ${shortName}`, 'success');
-//         } while (spentHashes > 0);
-//     }
-// }
-
 async function waitForHappy(division = kAgricultureDivision) {
     while (!allEmployeesSatisfied(division)) {
         log(ns_, `Waiting for employees to be happy.`);
@@ -857,6 +840,16 @@ function maybePurchaseResearch() {
 }
 
 async function mainTobaccoLoop() {
+    if (!disableHashes && 9 in activeSourceFiles_) {
+        const fPath = getFilePath('spend-hacknet-hashes.js');
+        const args = ['--spend-on', 'Exchange_for_Corporation_Research', '--liquidate'];
+        if (ns_.run(fPath, 1, ...args))
+            log(ns_, `INFO: Launched '${fPath}' to gain Corp Research more quickly (Can be disabled with --disable-spending-hashes)`);
+        else
+            log(ns_, `WARNING: Failed to launch '${fPath}' (already running?)`);
+    }
+
+    // TODO: Consider trick investing one last time when we have 3 products, before discontinuing one.
     while (true) {
         await sleepWhileNotInStartState(true);
         await writeStats();
@@ -970,12 +963,10 @@ export async function main(ns) {
         return;
     }
 
-    // TODO: Spend hashes on corp.
-
     // === Initial Setup ===
     // Set up Corp
-    const activeSourceFiles = await getActiveSourceFiles(ns);
-    if (!(3 in activeSourceFiles))
+    activeSourceFiles_ = await getActiveSourceFiles(ns);
+    if (!(3 in activeSourceFiles_))
         return log(ns, "Corporations not enabled.");
     try {
         if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
@@ -988,7 +979,7 @@ export async function main(ns) {
     if (runOptions[`skip-all-setup`])
         return mainTobaccoLoop();
 
-    // TODO: Start spending hashes on funds
+    // TODO: Consider spending hashes on funds here.
     // Set up agriculture.
     if (!await initialSetup())
         return;
