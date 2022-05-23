@@ -2,7 +2,7 @@ import {
     CorpBribePort, getBribeCost
 } from './corp-helpers.js';
 import {
-    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, getFilePath, instanceCount, log
+    formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, getFilePath, instanceCount, log, tryGetBitNodeMultipliers
 } from './helpers.js';
 
 let options = null; // The options used at construction time
@@ -1155,9 +1155,23 @@ export async function main(ns) {
     maxOfficeSize = runOptions[`max-office-size`];
     ns.disableLog(`ALL`);
 
+    activeSourceFiles_ = await getActiveSourceFiles(ns);
+    if (!(3 in activeSourceFiles_))
+        return log(ns, "Corporations not enabled.");
+
+    /**
+     * @type {BitNodeMultipliers}
+     */
+    const bitnodeMults = await tryGetBitNodeMultipliers(ns);
+    // TODO: Handle BN5 not complete. (Multipliers unavailable)
+    if (bitnodeMults.CorporationValuation <= 0.1 || bitnodeMults.CorporationSoftcap < 0.1)
+        return log(ns_, `Bitnode multipliers too low. Limit 10%` +
+            `CorpValuation: ${bitnodeMults.CorporationValuation * 100}%, ` + 
+            `CorpSoftCap: ${bitnodeMults.CorporationSoftcap*100}%`);
+
     if (runOptions[`simulate-agriculture-investor-trick`])
         return await trickInvest(kAgricultureDivision, false);
-    
+
 
     if (runOptions[`simulate-tobacco-investor-trick`])
         // TODO: Run loop until 3rd product, run price discovery for a bit, then trick invest.
@@ -1181,9 +1195,6 @@ export async function main(ns) {
 
     // === Initial Setup ===
     // Set up Corp
-    activeSourceFiles_ = await getActiveSourceFiles(ns);
-    if (!(3 in activeSourceFiles_))
-        return log(ns, "Corporations not enabled.");
     try {
         if (!corp_.hasUnlockUpgrade(`Office API`) || !corp_.hasUnlockUpgrade(`Warehouse API`))
             return log(ns, `This script requires both Office API and Warehouse API to run (BN 3.3 complete).`);
