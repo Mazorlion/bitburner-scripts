@@ -1,4 +1,7 @@
 import {
+    CorpBribePort, getBribeCost
+} from './corp-helpers.js';
+import {
     formatMoney, formatNumberShort, getActiveSourceFiles, getConfiguration, getFilePath, instanceCount, log
 } from './helpers.js';
 
@@ -938,6 +941,35 @@ function maybePurchaseResearch() {
 }
 
 /**
+ * Attempts to fulfill requests for bribing factions.
+ * @param {CorpBribePort} bribePort port to read from
+ */
+function maybeBribeFactions(bribePort) {
+    if (!bribePort)
+        return;
+
+    const kBribeSpendingFraction = 0.05; // 5%
+    let infiniteLoopDefense = 100;
+    while (!bribePort.isEmpty() && --infiniteLoopDefense) {
+        let bribe = bribePort.readBribe();
+        if (!bribe)
+            continue;
+
+        // We don't care about the RAM cost here because the relative cost (1 TiB vs 16 GiB at worst) is small.
+        const currentRep = ns_.singularity.getFactionRep(bribe.faction);
+        const cost = getBribeCost(currentRep, bribe.targetReputation);
+        if (cost > 0 && funds() * kBribeSpendingFraction > cost) {
+            try {
+                const result = corp_.bribe(bribe.faction, cost, 0);
+                log(ns_, `Attempted Bribe ${bribe.faction} to ${formatNumberShort(bribe.targetReputation)} rep costing ${formatMoney(cost)}: ${result}`);
+            } catch (error) {
+                log(ns_, `Failed to bribe ${bribe.faction}: ${error}`);
+            }
+        }
+    }
+}
+
+/**
  * The core of the corporation once everything is set up. Does the following:
  *   - Starts spending hashes on corp research
  *   - Writes stats out for stats.js
@@ -961,6 +993,7 @@ async function mainTobaccoLoop() {
         else
             log(ns_, `WARNING: Failed to launch '${fPath}' (already running?)`);
     }
+    let bribePort = new CorpBribePort(ns_);
 
     while (true) {
         await sleepWhileNotInStartState(true);
@@ -1032,7 +1065,8 @@ async function mainTobaccoLoop() {
             }
         }
 
-        // TODO: Bribe Factions
+        maybeBribeFactions(bribePort); // Attempt to bribe.
+
         if (corp().public) {
             for (const unlockable of [`Government Partnership`, "Shady Accounting"]) {
                 if (!corp_.hasUnlockUpgrade(unlockable) &&
