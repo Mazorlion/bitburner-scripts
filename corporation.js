@@ -1138,7 +1138,7 @@ export async function main(ns) {
         return;
 
     // Wait for happiness so that we get the best deal.
-    await waitForHappy();
+    await waitForHappy(kAgricultureDivision);
     // (TARGET CHECK IN) -> ~1.5m/s Profit
     // (INVESTOR MONEY): Accept investment offer for around $210b
     // TODO: Adjust investments for bitnode multipliers
