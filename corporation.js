@@ -417,6 +417,13 @@ async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
     if (!forceAssign && assigned === employees && employeeJobs.Unassigned === 0)
         return;
 
+    if (forceAssign) {
+        // If we're force reassigning, first clear everything so the below logic works.
+        for (const job of [`Operations`, `Engineer`, `Management`, `Research & Development`]) {
+            await corp_.setAutoJobAssignment(division, city, job, 0);
+        }
+    }
+
     // Special case 9
     if (employees === 9) {
         for (const job of [`Operations`, `Engineer`, `Management`, `Research & Development`]) {
