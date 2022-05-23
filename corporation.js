@@ -79,7 +79,7 @@ let getOffice = (division, city) => corp_.getOffice(division, city);
 let numEmployees = (division, city) => getOffice(division, city).employees.length;
 
 /**
- * 
+ * Sleeps while waiting for the START state.
  * @param {Boolean} waitForNext If currently in a START state, will sleep until the next one if true.
  */
 async function sleepWhileNotInStartState(waitForNext = false) {
@@ -113,7 +113,17 @@ function calculateOneTickPurchaseRate(material, desiredValue) {
     return (desiredValue - currentAmount) / 10;
 }
 
+/**
+ * @typedef {Object} MaterialPurchaseDefinition
+ * @property {String} name Name of the material to purchase
+ * @property {Number} targetQuantity Target quantity to have in the warehouse after purchase
+ */
+/**
+ * Purchase the given item quantities in a single tick.
+ * @param {MaterialPurchaseDefinition[]} items Items specifications to purchase
+ */
 async function purchaseInOneTick(items) {
+    // TODO: Check for warehouse capacity.
     // Wait for START, but if we're already in one that's fine.
     await sleepWhileNotInStartState(false);
     const cityItemPairs = kCities.reduce(
@@ -148,6 +158,14 @@ async function purchaseInOneTick(items) {
     });
 }
 
+/**
+ * Performs price discovery for all products in kTobaccoDivision.
+ * 
+ * Before Market-TA.II, uses the production overflow into the warehouse to calculate a good price.
+ * Ideally selects a price where produced == sold, in the steady state.
+ * 
+ * With Market-TA.II, just enables that and returns.
+ */
 async function doPriceDiscovery() {
     if (verbose) log(ns_, ``);
     // TODO: Don't log anything if we have Market-TA.II.
@@ -238,6 +256,16 @@ async function doPriceDiscovery() {
     if (verbose) log(ns_, ``);
 }
 
+/**
+ * @callback targetFunction
+ * @return {Number} Returns the threshold of funds at which to unblock.
+ */
+/**
+ * Waits for a threshold of corp funds before unblocking.
+ * @param {targetFunction} targetFunction Invoked each cycle to see if we're at the correct threshold.
+ * @param {String} reason Reason we're waiting for funds. No capitalization, no period at the end.
+ * @param {Number} sleepDuration Duration to sleep for between checks.
+ */
 async function waitForFunds(targetFunction, reason, sleepDuration = 15000) {
     while (targetFunction() > funds()) {
         log(ns_, `Waiting for money to ${reason}. Have: ${formatMoney(funds())}, Need: ${formatMoney(targetFunction())}`);
@@ -255,9 +283,9 @@ async function waitForInvestmentOffer(minOffer, sleepDuration = 15000) {
 }
 
 /**
- * 
- * @param {String} division 
- * @param {String} amount
+ * Set the amount to sell for all goods for a given division.
+ * @param {String} division Division to set for
+ * @param {String} amount Amount of all products/materials to sell
  */
 function setSelling(division, amount) {
     if (division === kAgricultureDivision) {
@@ -278,8 +306,8 @@ function setSelling(division, amount) {
 }
 
 /**
- * 
- * @param {String} division 
+ * Perform trick investing by stocking up on material/product then selling a lot in a single tick.
+ * @param {String} division Name of a division
  * @param {boolean} acceptInvestment If true, will actually accept a large enough investment.
  */
 async function trickInvest(division, acceptInvestment = true) {
@@ -349,6 +377,7 @@ async function trickInvest(division, acceptInvestment = true) {
 
     const kAcceptableFundsMultiplier = 6;
 	while (corp_.getInvestmentOffer().funds < (kAcceptableFundsMultiplier * initialInvestFunds)) {
+        // TODO: Maybe just sleepWhileNotInStartState(true) here.
 		await ns_.sleep(200);
         if (verbose) {
             log(ns_, `Waiting for funds to peak. Current:${formatMoney(corp_.getInvestmentOffer().funds)} ` + 
@@ -363,7 +392,7 @@ async function trickInvest(division, acceptInvestment = true) {
     // Accept the offer.
     if (acceptInvestment)
         corp_.acceptInvestmentOffer();
-    // TODO: Consider doing it with shares just on the first round.
+    // TODO: Consider doing it with shares just on the later rounds?
 	// corp_.goPublic(800e6);
 
 	for (const city of kCities) {
@@ -372,6 +401,13 @@ async function trickInvest(division, acceptInvestment = true) {
 	}
 }
 
+/**
+ * Conditionally expand a division to a new city.
+ * @param {String} division Division to expand
+ * @param {String} city City to expand to
+ * @param {Boolean} wait If true, will block until sufficient funds for expansion
+ * @returns True if expanded, false otherwise.
+ */
 async function maybeExpandCity(division, city, wait = true) {
     if (getDivision(division).cities.includes(city))
         return;
@@ -382,7 +418,10 @@ async function maybeExpandCity(division, city, wait = true) {
     corp_.expandCity(division, city);
     return true;
 }
-
+/**
+ * Enables smart supply on `division`, if it has a warehouse.
+ * @param {String} division Name of a division
+ */
 function setSmartSupply(division) {
     for (const city of kCities) {
         if (corp_.hasWarehouse(division, city))
@@ -398,11 +437,10 @@ function fillEmployees(division, city) {
 }
 
 /**
- * 
+ * Auto assigns employees in the given {division, city} pair.
  * @param {String} division 
  * @param {String} city 
  * @param {Boolean} forceAssign Should we force-reassign even if all employees have jobs
- * @returns 
  */
 async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
     const employeeJobs = getOffice(division, city).employeeJobs;
@@ -438,7 +476,15 @@ async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
     }
 }
 
-// Returns true if an upgrade happened, false otherwise.
+// 
+/**
+ * Conditionally upgrade a city's office.
+ * @param {String} division Division to upgrade
+ * @param {String} city City to upgrade
+ * @param {Number} targetSize Desired end size of the office in city
+ * @param {Boolean} wait If true, will wait for funds. If false, will either purchase or return false.
+ * @returns {Promise<Boolean>} Returns true if an upgrade happened, false otherwise.
+ */
 async function tryUpgradeOfficeToSize(division, city, targetSize, wait = true) {
     const startingSize = getOffice(division, city).size;
     if (startingSize >= targetSize)
@@ -462,11 +508,17 @@ async function tryUpgradeOfficeToSize(division, city, targetSize, wait = true) {
 
 const defaultUpgradeOfficeSettings = { assignEmployees: true, waitForFunds: true, returnIfNoOfficeUpgrade: false };
 /**
- * 
- * @param {String} division 
- * @param {String} city 
- * @param {Number} targetSize 
- * @param {*} upgradeSettings 
+ * @typedef {Object} OfficeUpgradeSettings
+ * @property {Boolean} assignEmployees If true, will attempt to assign employees after hiring.
+ * @property {Boolean} waitForFunds If true, will block until funds are available. If false will either purchase or return false.
+ * @property {Boolean} returnIfNoOfficeUpgrade If true, will return false if no upgrade happened. If false, will continue if no upgrade happened.
+ */
+/**
+ * Conditionally expand, upgrade size, hire, assign employees in a given office.
+ * @param {String} division Name of the division to upgrade
+ * @param {String} city Name of the city to upgrade
+ * @param {Number} targetSize Desired number of employees
+ * @param {OfficeUpgradeSettings} upgradeSettings Additional function settings.
  * @returns 
  */
 async function tryUpsizeHireAssignOffice(division, city, targetSize, upgradeSettings = defaultUpgradeOfficeSettings) {
@@ -482,13 +534,25 @@ async function tryUpsizeHireAssignOffice(division, city, targetSize, upgradeSett
     return true;
 }
 
+/**
+ * Attempts to upgrade all offices for a given division to targetSize.
+ * Will block until funds are available for each office.
+ * @param {String} division Division Name
+ * @param {Number} targetSize Desired Office Size
+ */
 async function tryUpsizeHireAssignAllOfficesToSize(division, targetSize) {
     for (const city of kCities) {
         await tryUpsizeHireAssignOffice(division, city, targetSize);
     }
 }
 
-async function tryUpgradeWarehouseToSize(division, city, targetSize) {
+/**
+ * Purchases a warehouse if necessary, then upgrades it to targetSize.
+ * @param {String} division Name of division to purchase for
+ * @param {String} city City of the warehouse to purchase for
+ * @param {Number} targetSize Desired target size of the warehouse (includes upgrades)
+ */
+async function upgradeWarehouseToSize(division, city, targetSize) {
     if (!corp_.hasWarehouse(division, city)) {
         await waitForFunds(() => corp_.getPurchaseWarehouseCost(), `purchase a warehouse in ${city}`);
         corp_.purchaseWarehouse(division, city);
@@ -502,8 +566,13 @@ async function tryUpgradeWarehouseToSize(division, city, targetSize) {
     }
 }
 
-// If `fundsFraction` < 1 || !`wait`, will purchase if immediately available or else return false.
-// Otherwise, waits for funds and returns true when complete.
+/**
+ * Conditionally level up `upgrade`.
+ * @param {String} upgrade Name of the upgrade to level
+ * @param {Boolean} wait If true, will wait for funds. If false, will return false if insufficient funds.
+ * @param {Number} fundsFraction [0,1] Fraction of total corp funds we can spend on this upgrade. Wait is ignored if <1.
+ * @returns 
+ */
 async function tryUpgradeLevel(upgrade, wait = true, fundsFraction = 1) {
     if (fundsFraction == 1 && wait)
         await waitForFunds(() => corp_.getUpgradeLevelCost(upgrade), `upgrade ${upgrade} to ${corp_.getUpgradeLevel(upgrade) + 1}`);
@@ -514,7 +583,7 @@ async function tryUpgradeLevel(upgrade, wait = true, fundsFraction = 1) {
 }
 
 /**
- * 
+ * Level `upgrade` to `targetLevel`. Will block until funds are available.
  * @param {String} upgrade Name of the upgrade whose level to increase.
  * @param {Number} targetLevel Level to which `upgrade` should be upgraded.
  */
@@ -523,10 +592,12 @@ async function upgradeToLevel(upgrade, targetLevel) {
         await tryUpgradeLevel(upgrade);
 }
 
+/**
+ * Perform initial setup of the corp and the Agriculture division.
+ */
 async function initialSetup() {
     // Log these functions for ease of information.
     ns_.enableLog(`ALL`);
-    // TODO: Double check this.
     try {
         corp();
     } catch (error) {
@@ -567,7 +638,7 @@ async function initialSetup() {
     }
 
     for (const city of kCities)
-        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 300);
+        await upgradeWarehouseToSize(kAgricultureDivision, city, 300);
     // Start selling `Plants` and `Food` for MAX/MP
     kCities.forEach((city) => {
         corp_.sellMaterial(kAgricultureDivision, city, `Plants`, `MAX`, `MP`);
@@ -617,10 +688,10 @@ async function initialSetup() {
 }
 
 /**
- * Do all employees have enough happiness, energy, and morale?
- * @param {string} division
- * @param {number} lowerLimit - minimum for all stats [0,1]
- * @returns {boolean}
+ * Checks if all employees in a division have sufficients happiness stats.
+ * @param {String} division Division to check for
+ * @param {Number} lowerLimit - minimum for all stats [0,1]
+ * @returns {Boolean} True if all employees are happy, false otherwise.
  */
 function allEmployeesSatisfied(division = kAgricultureDivision, lowerLimit = 0.99998) {
     let allSatisfied = true;
@@ -638,6 +709,10 @@ function allEmployeesSatisfied(division = kAgricultureDivision, lowerLimit = 0.9
     return allSatisfied;
 }
 
+/**
+ * Waits until all employees of `division` are sufficiently happy.
+ * @param {String} division name of the division to wait for
+ */
 async function waitForHappy(division) {
     // TODO: Detect happiness decreasing and bail out.
     while (!allEmployeesSatisfied(division)) {
@@ -647,6 +722,9 @@ async function waitForHappy(division) {
     log(ns_, "Employees are happy, continuing with setup.");
 }
 
+/**
+ * Performs the second round of upgrades to Agriculture.
+ */
 async function secondGrowthRound() {
     // === Second Growth Round ===
     // (UPSIZE OFFICES)
@@ -664,7 +742,7 @@ async function secondGrowthRound() {
     // (MONEY CHECK): Expect around $110b
     // (UPSIZE WAREHOUSES) Upgrade 7 times to 2k
     for (const city of kCities)
-        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 2000);
+        await upgradeWarehouseToSize(kAgricultureDivision, city, 2000);
 
     // (MONEY CHECK): Expect around $45b
     // (SUPPORT ITEMS) Purchase via one-tick:
@@ -693,11 +771,14 @@ async function secondGrowthRound() {
     await purchaseInOneTick(secondRoundSupportItems);
 }
 
+/**
+ * Performs the final round of upgrades to Agriculture.
+ */
 async function thirdGrowthRound() {
     // === Third Growth Round ===
     // (UPSIZE WAREHOUSE): 9 upgrades to 3,800
     for (const city of kCities)
-        await tryUpgradeWarehouseToSize(kAgricultureDivision, city, 3800);
+        await upgradeWarehouseToSize(kAgricultureDivision, city, 3800);
 
     // (SUPPORT MATERIALS) Purchase via one-tick:
     const thirdRoundSupportItems = [
@@ -725,6 +806,9 @@ async function thirdGrowthRound() {
     await purchaseInOneTick(thirdRoundSupportItems);
 }
 
+/**
+ * Expands to the Tobacco industry, does initial office setup, then starts product development.
+ */
 async function performTobaccoExpansion() {
     // ===========================
     // === Product Development ===
@@ -747,7 +831,7 @@ async function performTobaccoExpansion() {
     for (const city of kCities) {
         await tryUpsizeHireAssignOffice(kTobaccoDivision, city, 9);
         // Just make sure this is a warehouse at all.
-        await tryUpgradeWarehouseToSize(kTobaccoDivision, city, 1);
+        await upgradeWarehouseToSize(kTobaccoDivision, city, 1);
     }
 
     // === Develop Product ===
@@ -787,6 +871,9 @@ async function performTobaccoExpansion() {
     }
 }
 
+/**
+ * Conditionally discontinues the lowest-rated product if we're at 3 products and none are being developed.
+ */
 function maybeDiscontinueProduct() {
     const products = getProducts(kTobaccoDivision);
     if (products.length < 3 || products.some(product => product.developmentProgress < 100))
@@ -800,6 +887,9 @@ function maybeDiscontinueProduct() {
     corp_.discontinueProduct(kTobaccoDivision, discontinuedItem.name);
 }
 
+/**
+ * Begins product development if non are currently being developed.
+ */
 function maybeDevelopNewProduct() {
     const tobaccoProducts = 
         getProducts(kTobaccoDivision).filter(product => product.name.startsWith(`Tobacco v`));
@@ -826,6 +916,9 @@ function maybeDevelopNewProduct() {
 
 const kLabResearchThreshold = 10e3; // 10,000 (2x 5,000)
 const kMarketTaResearchThreshold = 140e3; // 140,000 (2x 70,000)
+/**
+ * Conditionally purchases the Lab and Market.TA-II researches if we have double their cost.
+ */
 function maybePurchaseResearch() {
     const division = getDivision(kTobaccoDivision);
     const hasLab = corp_.hasResearched(kTobaccoDivision, `Hi-Tech R&D Laboratory`);
@@ -845,6 +938,20 @@ function maybePurchaseResearch() {
         log(ns_, `Researched Lab: ${hasLab}. Researched Market-TA.II: ${hasMarketTa}.`);
 }
 
+/**
+ * The core of the corporation once everything is set up. Does the following:
+ *   - Starts spending hashes on corp research
+ *   - Writes stats out for stats.js
+ *   - Updates the prices of tobacco products
+ *   - Discontinues a product when at maximum
+ *   - Develops new products continuously
+ *   - Purchases tobacco division research
+ *   - Purchases Corp upgrades (Wilson)
+ *   - Upgrades tobacco product dev office or purchases AdVert
+ *   - Upgrades non-dev offices to a fixed threshold below the dev office
+ *   - Purchases one-time dividend boosting upgrades if public
+ *   - Purchases other corp upgrades with fractional corp funds
+ */
 async function mainTobaccoLoop() {
     // TODO: Maybe kill spending for corp money if it's running.
     if (!disableHashes && 9 in activeSourceFiles_) {
@@ -914,10 +1021,8 @@ async function mainTobaccoLoop() {
                 { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true });
         }
 
-        // 
         // <Investment>
         // Check Invstors. One more investment at >$800t
-        // Potentially one more, but clear
         // Go public at some point. (maybe manual for now)
         // Declare dividends.
 
@@ -932,17 +1037,18 @@ async function mainTobaccoLoop() {
             }
         }
         // Upgrades by the fraction we're willing to spend on them.
+        // TODO: Maybe lower multipliers before Aevum is at some critical mass.
         const upgrades = [
-            [`Wilson Analytics`, 1],
-            [`Project Insight`, 0.05],
-            [`DreamSense`, 0.05],
-            [`ABC SalesBots`, 0.05],
-            [`FocusWires`, 0.025],
-            [`Speech Processor Implants`, 0.025],
-            [`Nuoptimal Nootropic Injector Implants`, 0.025],
-            [`Neural Accelerators`, 0.025],
-            [`Smart Factories`, 0.02],
-            [`Smart Storage`, 0.005],
+            [`Wilson Analytics`, 1], // 100%
+            [`Project Insight`, 0.05], // 5%
+            [`DreamSense`, 0.05],  // 5%
+            [`ABC SalesBots`, 0.05], // 5%
+            [`FocusWires`, 0.025], // 2.5%
+            [`Speech Processor Implants`, 0.025], // 2.5%
+            [`Nuoptimal Nootropic Injector Implants`, 0.025], //2.5%
+            [`Neural Accelerators`, 0.025], // 2.5%
+            [`Smart Factories`, 0.02], // 2%
+            [`Smart Storage`, 0.001], //0.01%
         ];
         for (const upgradePair of upgrades) {
             const upgrade = String(upgradePair[0]);
@@ -953,6 +1059,9 @@ async function mainTobaccoLoop() {
     }
 }
 
+/**
+ * Writes out stats to /Temp/corp-stats.txt for consumption by stats.js.
+ */
 async function writeStats() {
     let stats = {};
     stats.timestamp = Date.now();
