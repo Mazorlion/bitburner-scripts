@@ -159,16 +159,18 @@ export async function main(ns) {
                         /**
                          * @type {InvestmentOffer}
                          */
-                        const offer =  corpStats.currentOffer;
-                        addHud(`Corp IOff`, `${formatMoney(offer.funds, 3, 2)}`, 
-                        `Current private investment offer.\n` +
-                        `Round: ${offer.round}, Shares: ${formatNumberShort(offer.shares)}`);
+                        const offer = corpStats.currentOffer;
+                        addHud(`Corp IOff`, `${formatMoney(offer.funds, 3, 2)}`,
+                            `Current private investment offer.\n` +
+                            `Round: ${offer.round}, Shares: ${formatNumberShort(offer.shares)}`);
+                    } else if (corp.public) {
+                        // If not public the initial share price is detemined by the internal valuation so we don't know it.
+                        addHud(`Corp Shr$`, `${formatMoney(corp.sharePrice)}`,
+                            `Total shares: ${formatNumberShort(corp.totalShares)}\n` +
+                            `Owned Shares: ${formatNumberShort(corp.numShares)}\n` +
+                            `Issued Shares: ${formatNumberShort(corp.issuedShares)}\n` +
+                            `Is Public: ${corp.public}`);
                     }
-                    addHud(`Corp Shr$`, `${formatMoney(corp.sharePrice)}`,
-                        `Total shares: ${formatNumberShort(corp.totalShares)}\n` +
-                        `Owned Shares: ${formatNumberShort(corp.numShares)}\n` +
-                        `Issued Shares: ${formatNumberShort(corp.issuedShares)}\n` +
-                        `Is Public: ${corp.public}`);
                 }
             }
 
