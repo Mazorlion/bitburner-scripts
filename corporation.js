@@ -729,7 +729,6 @@ async function secondGrowthRound() {
     // === Second Growth Round ===
     // (UPSIZE OFFICES)
     await tryUpsizeHireAssignAllOfficesToSize(kAgricultureDivision, 9);
-    log(ns_, `Upsized all Agriculture offices to 9 employees`);
 
     // (MONEY CHECK): Expect around $160b
     // (UPGRADES) PURCHASE:
@@ -1023,8 +1022,15 @@ async function mainTobaccoLoop() {
 
         // <Investment>
         // Check Invstors. One more investment at >$800t
-        // Go public at some point. (maybe manual for now)
-        // Declare dividends.
+
+        // If we have a ton of money, just commit to going public so we can issue ourselves dividends.
+        // TODO: Pick a better value, this is just to remove all thought for now.
+        if (funds() > 1e30) {
+            if (!corp().public) {
+                corp_.goPublic(1);
+                corp_.issueDividends(0.1);
+            }
+        }
 
         // TODO: Bribe Factions
         if (corp().public) {
