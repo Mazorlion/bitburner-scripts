@@ -493,6 +493,9 @@ async function manageUnownedAugmentations(ns, ignoredAugs) {
  * @param {NS} ns 
  */
 async function bribeFactions(ns) {
+    if (options[`disable-bribes`])
+        return;
+
     const bribableFactions =
         Object.values(factionData)
             .filter(faction => faction.joined && faction.canDonate && faction.highestAugReputationReq() > faction.reputation);
