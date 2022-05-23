@@ -8,7 +8,10 @@ const argsSchema = [ // The set of all command line arguments
     ['skip-all-setup', false], // Should we just jump straight to the loop?
     [`max-office-size`, 1000], // Cap size of offices for game performance.
     [`simulate-investor-trick`, false],
+    [`simulate-tobacco-investor-trick`, false],
     [`disable-spending-hashes`, false], // If true, will not start spend-hashes.
+    [`only-do-price-discovery`, false],
+    [`only-force-assign-employees`, false],
 ];
 export function autocomplete(data, args) {
     data.flags(argsSchema);
@@ -27,19 +30,6 @@ const kAgricultureDivision = `Ag`;
 const kTobaccoDivision = `Tobacco`;
 const kCities = [`Aevum`, `Chongqing`, `Sector-12`, `New Tokyo`, `Ishima`, `Volhaven`];
 const kProductDevCity = `Aevum`;
-
-const upgrades = [
-    `Wilson Analytics`,
-    `Project Insight`,
-    `ABC SalesBots`,
-    `FocusWires`,
-    `Speech Processor Implants`,
-    `Nuoptimal Nootropic Injector Implants`,
-    `Neural Accelerators`,
-    `DreamSense`,
-    `Smart Factories`,
-    `Smart Storage`,
-];
 
 // Convenience Aliases.
 /**
@@ -277,13 +267,9 @@ function setSelling(division, amount) {
                 corp_.sellMaterial(division, city, material, amount, `MP`); 
         }
     } else if (division === kTobaccoDivision) {
-        // TODO: Figure out how to price this properly. (Remember price?)
-        log(ns_, `Tick selling is currently disabled for Tobacco.`);
-        return; // Disable Tobacco for now.
-        // Main loop will fix prices here if TA.II isn't enabled.
-        for (const city of kCities) {
-            for (const product of getDivision(division).products)
-                corp_.sellProduct(division, city, product, amount, `MP`, false); 
+        for (const product of getProducts(kTobaccoDivision)) {
+            // TODO: Consider reducing `sCost` to sell more in one cycle.
+            corp_.sellProduct(division, kProductDevCity, product.name, amount, String(product.sCost), true);
         }
     } else {
         log(ns_, `Unknown division ${division}. change selling status.`);
@@ -296,10 +282,12 @@ function setSelling(division, amount) {
  * @param {String} division 
  * @param {boolean} acceptInvestment If true, will actually accept a large enough investment.
  */
-async function trickInvest(division = kAgricultureDivision, acceptInvestment = true) {
+async function trickInvest(division, acceptInvestment = true) {
+    // TODO: Consider doing this for all divisions at once? Maybe not worthwhile as Ag ends up being nearly nothing.
     log(ns_, `Preparing to trick investors.`);
-    // Wait for happy employees to maximize productivity.
-    await waitForHappy(division);
+    // Wait for happy employees to maximize productivity. Tobacco will be losing money if all products are unset though.
+    if (division === kAgricultureDivision)
+        await waitForHappy(division);
 
     // Grab the initial offer before we mess with our sales.
 	const initialInvestFunds = corp_.getInvestmentOffer().funds;
@@ -314,12 +302,18 @@ async function trickInvest(division = kAgricultureDivision, acceptInvestment = t
 		
 		await corp_.setAutoJobAssignment(division, city, "Management", 0);
 		await corp_.setAutoJobAssignment(division, city, "Research & Development", 0);
-        // TODO: It's possible setting operations here is fine and just engineer before we sell.
-		await corp_.setAutoJobAssignment(division, city, "Operations", 0);        
 		await corp_.setAutoJobAssignment(division, city, "Business", 0);
-        await corp_.setAutoJobAssignment(division, city, "Engineer", employees);
-	}
+        if (division === kAgricultureDivision) {
+            // TODO: It's possible setting operations here is fine and just engineer before we sell.
+            await corp_.setAutoJobAssignment(division, city, "Operations", 0);
+            await corp_.setAutoJobAssignment(division, city, "Engineer", employees);
+        } else {
+            await corp_.setAutoJobAssignment(division, city, "Engineer", 0);
+            await corp_.setAutoJobAssignment(division, city, "Operations", employees);
+        }
+    }
 
+    // TODO: Maybe increase warehouse sizes.
     log(ns_, `Waiting for warehouses to fill up`);
 	let allWarehousesFull = false;
 	while (!allWarehousesFull) {
@@ -341,14 +335,16 @@ async function trickInvest(division = kAgricultureDivision, acceptInvestment = t
 	for (const city of kCities) {
 		// put all employees into business to sell as much as possible 
 		const employees = numEmployees(division, city);
-        const business = Math.floor(employees/3);
+        // For material based (agriculture), use some engineers. Otherwise all business.
+        const business = division === kAgricultureDivision ? Math.floor(employees/3) : employees ;
+        await corp_.setAutoJobAssignment(division, city, "Operations", 0);
 		await corp_.setAutoJobAssignment(division, city, "Engineer", employees - business);
 		await corp_.setAutoJobAssignment(division, city, "Business", business);
 	}
 
     // Resume selling.
     log(ns_, `Employees assigned, waiting for START then we'll begin selling.`);
-    await sleepWhileNotInStartState(false);
+    await sleepWhileNotInStartState(true);
     setSelling(division, `MAX`);
 
     const kAcceptableFundsMultiplier = 6;
@@ -419,7 +415,7 @@ async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
 
     if (forceAssign) {
         // If we're force reassigning, first clear everything so the below logic works.
-        for (const job of [`Operations`, `Engineer`, `Management`, `Research & Development`]) {
+        for (const job of [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`]) {
             await corp_.setAutoJobAssignment(division, city, job, 0);
         }
     }
@@ -449,15 +445,17 @@ async function tryUpgradeOfficeToSize(division, city, targetSize, wait = true) {
         return false;
 
     const increment = targetSize - startingSize;
-    log(ns_, `Upgrading ${city} by ${increment} to ${targetSize}.`);
 
     const costFunction = () => corp_.getOfficeSizeUpgradeCost(division, city, increment);
     const reason = `upgrade ${city} by ${increment} to ${targetSize}`
     if (wait)
         await waitForFunds(costFunction, reason);
-    else if (funds() < costFunction())
+    else if (funds() < costFunction()) {        
+        log(ns_, `Cannot ${reason}; insufficient funds.`);
         return false;
+    }
 
+    log(ns_, `Upgrading ${city} by ${increment} to ${targetSize}.`);
     corp_.upgradeOfficeSize(division, city, increment);
     return true;
 }
@@ -640,7 +638,8 @@ function allEmployeesSatisfied(division = kAgricultureDivision, lowerLimit = 0.9
     return allSatisfied;
 }
 
-async function waitForHappy(division = kAgricultureDivision) {
+async function waitForHappy(division) {
+    // TODO: Detect happiness decreasing and bail out.
     while (!allEmployeesSatisfied(division)) {
         log(ns_, `Waiting for employees to be happy.`);
         await ns_.sleep(5000);
@@ -847,6 +846,7 @@ function maybePurchaseResearch() {
 }
 
 async function mainTobaccoLoop() {
+    // TODO: Maybe kill spending for corp money if it's running.
     if (!disableHashes && 9 in activeSourceFiles_) {
         const fPath = getFilePath('spend-hacknet-hashes.js');
         const args = ['--spend-on', 'Exchange_for_Corporation_Research', '--liquidate'];
@@ -856,7 +856,6 @@ async function mainTobaccoLoop() {
             log(ns_, `WARNING: Failed to launch '${fPath}' (already running?)`);
     }
 
-    // TODO: Consider trick investing one last time when we have 3 products, before discontinuing one.
     while (true) {
         await sleepWhileNotInStartState(true);
         await writeStats();
@@ -872,6 +871,7 @@ async function mainTobaccoLoop() {
         }
 
         // If necessary to make room for new development, discontinue a product.
+        // TODO: Consider trick investing one last time when we have 3 products, before discontinuing one.
         maybeDiscontinueProduct();
         maybeDevelopNewProduct();
 
@@ -930,9 +930,23 @@ async function mainTobaccoLoop() {
                 log(ns_, `Unlocking one-time upgrade ${unlockable}.`, false, `success`);
             }
         }
-        const kUpgradeFundsFraction = 0.005; // 0.5%
-        for (const upgrade of upgrades) {
-            while(await tryUpgradeLevel(upgrade, false, kUpgradeFundsFraction))
+        // Upgrades by the fraction we're willing to spend on them.
+        const upgrades = [
+            [`Wilson Analytics`, 1],
+            [`Project Insight`, 0.05],
+            [`DreamSense`, 0.05],
+            [`ABC SalesBots`, 0.05],
+            [`FocusWires`, 0.025],
+            [`Speech Processor Implants`, 0.025],
+            [`Nuoptimal Nootropic Injector Implants`, 0.025],
+            [`Neural Accelerators`, 0.025],
+            [`Smart Factories`, 0.02],
+            [`Smart Storage`, 0.005],
+        ];
+        for (const upgradePair of upgrades) {
+            const upgrade = String(upgradePair[0]);
+            const fraction = Number(upgradePair[1]);
+            while (await tryUpgradeLevel(upgrade, false, fraction))
                 log(ns_, `Upgraded ${upgrade} to ${corp_.getUpgradeLevel(upgrade)}.`);
         }
     }
@@ -970,6 +984,28 @@ export async function main(ns) {
         return;
     }
 
+    if (runOptions[`simulate-tobacco-investor-trick`]) {
+        // TODO: Run loop until 3rd product, run price discovery for a bit, then trick invest.
+        await trickInvest(kTobaccoDivision, false);
+        return;
+    }
+
+    if (runOptions[`only-force-assign-employees`]) {        
+        for(const city of kCities)
+            await maybeAutoAssignEmployees(kTobaccoDivision, city, true);
+        return;
+    }
+
+    if (runOptions[`only-do-price-discovery`]) {
+        for(const city of kCities)
+            await maybeAutoAssignEmployees(kTobaccoDivision, city, true);
+        for (let i = 0; i < 10; ++i) {
+            await sleepWhileNotInStartState(true);
+            doPriceDiscovery();
+        }
+        return;
+    }
+
     // === Initial Setup ===
     // Set up Corp
     activeSourceFiles_ = await getActiveSourceFiles(ns);
@@ -997,15 +1033,13 @@ export async function main(ns) {
     // (INVESTOR MONEY): Accept investment offer for around $210b
     // TODO: Adjust investments for bitnode multipliers
     if (corp().numShares === 1e9 && funds() < 210e9)
-        await trickInvest(kAgricultureDivision);
+        await trickInvest(kAgricultureDivision, true);
     await secondGrowthRound();
     // (INVESTOR MONEY): Accept investment offer for $5t
     if (corp().numShares === 900e6 && funds() < 5e12)
-        await trickInvest(kAgricultureDivision);
+        await trickInvest(kAgricultureDivision, true);
     await thirdGrowthRound();
     // (MULTIPLIER CHECK): TODO: Expect Production Multiplier over 500
     await performTobaccoExpansion();
-    // TODO: Start spending hashes on research, stop spending on funds. (or maybe both to start?)
-    //TODO: Write a file once we're set up so we can avoid all the earlier work on startup.
     await mainTobaccoLoop();
 }
