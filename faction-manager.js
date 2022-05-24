@@ -1,4 +1,4 @@
-import { requestBribe } from 'corp-helpers.js';
+import { requestBribe } from './corp-helpers.js';
 import {
     log, getConfiguration, instanceCount, formatNumberShort, formatMoney,
     getNsDataThroughFile, getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue
