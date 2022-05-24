@@ -1165,7 +1165,7 @@ export async function main(ns) {
     const bitnodeMults = await tryGetBitNodeMultipliers(ns);
     // TODO: Handle BN5 not complete. (Multipliers unavailable)
     if (bitnodeMults.CorporationValuation <= 0.1 || bitnodeMults.CorporationSoftcap < 0.1)
-        return log(ns_, `Bitnode multipliers too low. Limit 10%` +
+        return log(ns_, `Bitnode multipliers too low, Limit 10%. ` +
             `CorpValuation: ${bitnodeMults.CorporationValuation * 100}%, ` + 
             `CorpSoftCap: ${bitnodeMults.CorporationSoftcap*100}%`);
 
