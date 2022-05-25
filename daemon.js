@@ -1,3 +1,4 @@
+import { calculateGrowThreads } from './hacking-helpers.js';
 import {
     formatMoney, formatRam, formatDuration, formatDateTime, formatNumber,
     scanAllServers, hashCode, disableLogs, log, getFilePath, getConfiguration,
@@ -904,18 +905,18 @@ class Server {
         // Force rounding of low-precision digits before taking the floor, to avoid double imprecision throwing us way off.
         return Math.floor((this.percentageToSteal / this.percentageStolenPerHackThread()).toPrecision(14));
     }
-    getGrowThreadsNeeded() {
-        return Math.min(this.getMaxMoney(),
-
-            // TODO: Not true! Worst case is 1$ per thread and *then* it multiplies. We can return a much lower number here.
-            Math.ceil((this.cyclesNeededForGrowthCoefficient() / this.serverGrowthPercentage()).toPrecision(14)));
+    getGrowThreadsNeeded(cores = 1) {
+        return Math.ceil(calculateGrowThreads(this.ns, 
+            this.name, this.getMaxMoney() - this.getMoney(), cores, { moneyAvailable: this.getMoney(), hackDifficulty: this.getMinSecurity() }));
     }
-    getWeakenThreadsNeeded() {
+    getWeakenThreadsNeeded(cores = 1) {
         return Math.ceil(((this.getSecurity() - this.getMinSecurity()) / actualWeakenPotency()).toPrecision(14));
     }
-    getGrowThreadsNeededAfterTheft() {
-        return Math.min(this.getMaxMoney(),
-            Math.ceil((this.cyclesNeededForGrowthCoefficientAfterTheft() / this.serverGrowthPercentage() * recoveryThreadPadding).toPrecision(14)));
+    getGrowThreadsNeededAfterTheft(cores = 1) {
+        const percentStolen = this.getHackThreadsNeeded() * this.percentageStolenPerHackThread();
+        const neededGrowth = 1 / (1 - percentStolen);
+        const neededMoney = neededGrowth * this.getMaxMoney();
+        return Math.ceil(calculateGrowThreads(this.ns, this.name, neededMoney, cores, {hackDifficulty: this.getMinSecurity(), moneyAvailable: this.getMaxMoney() * (1 - percentStolen)}));
     }
     getWeakenThreadsNeededAfterTheft() {
         return Math.ceil((this.getHackThreadsNeeded() * hackThreadHardening / actualWeakenPotency() * recoveryThreadPadding).toPrecision(14));

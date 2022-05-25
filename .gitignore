@@ -1,5 +1,7 @@
 
 *.txt
 .vscode/*.*
-*.ts
 jsconfig.json
+node_modules/*
+*.json
+*.js.map
