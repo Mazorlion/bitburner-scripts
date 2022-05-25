@@ -7,7 +7,7 @@ import {
 const defaultStartupScript = getFilePath('daemon.js');
 const defaultStartupArgs = ['--reserved-ram', Number.MAX_SAFE_INTEGER];
 const defaultCompletionScript = getFilePath('daemon.js');
-const defaultCompletionArgs = ['-v', '--stock-manipulation'];
+const defaultCompletionArgs = ['--stock-manipulation'];
 // Name of the external script that will be created and called to generate charges
 const chargeScript = "/Temp/stanek.js.charge.js";
 const awakeningRep = 1E6;
