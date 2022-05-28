@@ -250,7 +250,11 @@ export async function main(ns) {
     const reqRam = (ram) => ns.getServerMaxRam("home") >= ram; // To avoid wasting precious RAM, many scripts don't launch unless we have more than a certain amount
     asynchronousHelpers = [
         { name: "stats.js", shouldRun: () => reqRam(64) }, // Adds stats not usually in the HUD
-        { name: "stockmaster.js", shouldRun: () => reqRam(64), args: openTailWindows ? ["--show-market-summary"] : [], tail: openTailWindows }, // Start our stockmaster
+        { name: "stockmaster.js", shouldRun: () => reqRam(64), args: openTailWindows ? ["--show-market-summary"] : [], tail: openTailWindows }, // Start our stockmaster        
+        {
+            name: `corporation.js`, tail: false,
+            shouldRun: () => reqRam(4048) && 3 in dictSourceFiles
+        },
         { name: "hacknet-upgrade-manager.js", shouldRun: () => reqRam(64), args: ["-c", "--max-payoff-time", "1h"] }, // Kickstart hash income by buying everything with up to 1h payoff time immediately
         { name: "spend-hacknet-hashes.js", args: [], shouldRun: () => reqRam(64) && 9 in dictSourceFiles }, // Always have this running to make sure hashes aren't wasted
         { name: "sleeve.js", tail: openTailWindows, shouldRun: () => 10 in dictSourceFiles }, // Script to create manage our sleeves for us
@@ -262,10 +266,6 @@ export async function main(ns) {
         {   // Script to create manage bladeburner for us
             name: "bladeburner.js", tail: openTailWindows,
             shouldRun: () => 7 in dictSourceFiles && (_cachedPlayerInfo.inBladeburner || [6, 7].includes(playerBitnode))
-        },
-        {
-            name: `corporation.js`, tail: openTailWindows,
-            shouldRun: () => reqRam(4048) && 3 in dictSourceFiles
         },
     ];
     asynchronousHelpers.forEach(helper => helper.name = getFilePath(helper.name));

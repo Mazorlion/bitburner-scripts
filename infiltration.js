@@ -614,6 +614,36 @@ function playGame() {
         endInfiltration();
         return;
     }
+    // if (screens[0].children.length == 2) {
+    //     // Potentially at end screen.
+    //     // Automatically Sell.
+    //     const btnSell = filterByText(getEl("button"), "Sell for");
+    //     if (!btnSell) {
+    //         return;
+    //     }
+    //     try {
+    //         btnSell.click();
+    //         // TODO: Start another one.
+    //         // const cityMenuItem = doc.querySelectorAll('[aria-label="City"][data-testid="LocationCityIcon"]')
+    //         // if (!cityMenuItem || cityMenuItem.length === 0) {
+    //         //     return;
+    //         // }
+    //         // const cityButton = cityMenuItem[0].parentNode.parentElement
+    //         // if (!cityButton)
+    //         //     return;
+    //         // cityButton.click();
+
+    //         doc.querySelector('[aria-label=ECorp]').click();
+
+    //         const btnInfil = filterByText(getEl("button"), "Infiltrate Company");
+    //         if (!btnInfil)
+    //             return;
+    //         btnInfil.click();
+    //     } catch (error) {
+    //         console.log(error);
+    //     }
+        // return;
+    //} else 
     if (screens[0].children.length < 3) {
         return;
     }
@@ -625,14 +655,13 @@ function playGame() {
         endInfiltration();
         return;
     }
- 
+
     const title = h4[0].textContent.trim().toLowerCase().split(/[!.(]/)[0];
- 
     if ("infiltration successful" === title) {
         endInfiltration();
         return;
     }
- 
+
     if ("get ready" === title) {
         return;
     }
@@ -669,7 +698,8 @@ function wrapEventListeners() {
             let handler = false;
  
             // For this script, we only want to modify "keydown" events.
-            if ("keydown" === type) {
+            const types = ["keydown", "click", "mousedown", "mouseup", "pointerdown"];
+            if (types.includes(type)) {
                 handler = function (...args) {
                     if (!args[0].isTrusted) {
                         const hackedEv = {};
