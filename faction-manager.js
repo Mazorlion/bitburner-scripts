@@ -16,7 +16,7 @@ const potentialGangFactions = ["Slum Snakes", "Tetrads", "The Black Hand", "The 
 const default_hidden_stats = ['bladeburner', 'hacknet']; // Hide from the summary table by default because they clearly all come from one faction.
 const output_file = "/Temp/affordable-augs.txt";
 const staneksGift = "Stanek's Gift - Genesis";
-const factionsWithoutDonation = ["Bladeburners", "Church of the Machine God"]; // Not allowed to donate to these factions for rep
+const factionsWithoutDonation = ["Bladeburners", "Church of the Machine God", "Shadows of Anarchy"]; // Not allowed to donate to these factions for rep
 
 // Factors used in calculations
 const nfCountMult = 1.14; // Factors that control how neuroflux prices scale
@@ -178,6 +178,7 @@ export async function main(ns) {
     // Create the table of all augmentations, and the breakdown of what we can afford
     await manageUnownedAugmentations(ns, omitAugs);
 
+    // TODO: If we don't have a faction with donations, bribe until we would next reset so we can get NF.
     // Bribe factions
     await bribeFactions(ns);
 
@@ -501,7 +502,7 @@ async function bribeFactions(ns) {
         Object.values(factionData)
             .filter(faction => faction.joined && faction.canDonate && faction.highestAugReputationReq() > faction.reputation);
     for (const faction of bribableFactions) {
-        await requestBribe(ns, faction, faction.highestAugReputationReq());
+        await requestBribe(ns, faction.name, faction.highestAugReputationReq());
     }
 }
 

@@ -294,7 +294,16 @@ function setSelling(division, amount) {
     } else if (division === kTobaccoDivision) {
         for (const product of getProducts(kTobaccoDivision)) {
             // TODO: Consider reducing `sCost` to sell more in one cycle.
-            corp_.sellProduct(division, kProductDevCity, product.name, amount, String(product.sCost), true);
+            let price = String(product.sCost);
+            try {
+                // @ts-ignore
+                if (amount !== `0`) {
+                    const sMult = price.split('*')[1];
+                    const multiplier = Number.parseFloat(sMult);
+                    price = `MP*${Math.ceil(multiplier / 5)}`
+                }
+            } catch { }
+            corp_.sellProduct(division, kProductDevCity, product.name, amount, price, true);
         }
     } else {
         log(ns_, `Unknown division ${division}. change selling status.`);
@@ -320,6 +329,8 @@ async function trickInvest(division, acceptInvestment = true) {
     log(ns_, `Initial investment offer:${formatMoney(initialInvestFunds)}`);
     // Stop selling.
     setSelling(division, `0`);
+    if (division === kTobaccoDivision)
+        setSelling(kAgricultureDivision, `0`);
 
 	for (const city of kCities) {
 		// put all employees into production to produce as fast as possible 
@@ -352,7 +363,7 @@ async function trickInvest(division, acceptInvestment = true) {
 				break;
 			}
 		}
-		await ns_.sleep(5000);
+        await sleepWhileNotInStartState(true);
 	}
 
 	log(ns_, `Warehouses are full; reassign employees for profit cycle.`);
@@ -361,7 +372,7 @@ async function trickInvest(division, acceptInvestment = true) {
 		// put all employees into business to sell as much as possible 
 		const employees = numEmployees(division, city);
         // For material based (agriculture), use some engineers. Otherwise all business.
-        const business = division === kAgricultureDivision ? Math.floor(employees/3) : employees ;
+        const business = division === kAgricultureDivision ? Math.floor(employees/3) : employees;
         await corp_.setAutoJobAssignment(division, city, "Operations", 0);
 		await corp_.setAutoJobAssignment(division, city, "Engineer", employees - business);
 		await corp_.setAutoJobAssignment(division, city, "Business", business);
@@ -371,16 +382,19 @@ async function trickInvest(division, acceptInvestment = true) {
     log(ns_, `Employees assigned, waiting for START then we'll begin selling.`);
     await sleepWhileNotInStartState(true);
     setSelling(division, `MAX`);
+    if (division === kTobaccoDivision)
+        setSelling(kAgricultureDivision, `MAX`);
 
-    const kAcceptableFundsMultiplier = 6;
+    // For product based: Consider taking one tick after the peak since it should still be high.
+    const kAcceptableFundsMultiplier = 2.5;
 	while (corp_.getInvestmentOffer().funds < (kAcceptableFundsMultiplier * initialInvestFunds)) {
-        // TODO: Maybe just sleepWhileNotInStartState(true) here.
-		await ns_.sleep(200);
+        // TODO: If the offer went down either bail or just accept it if it's still sufficient.
         if (verbose) {
             log(ns_, `Waiting for funds to peak. Current:${formatMoney(corp_.getInvestmentOffer().funds)} ` + 
                 `Target: ${formatMoney(initialInvestFunds * kAcceptableFundsMultiplier)}`)                
             log(ns_, `Waiting. Share price change: ${formatMoney(initialSharePrice)} -> ${formatMoney(corp().sharePrice)}`);
         }
+        await sleepWhileNotInStartState(true);
 	}
 
     const investmentOffer = corp_.getInvestmentOffer();
@@ -454,8 +468,9 @@ async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
 
     if (forceAssign) {
         // If we're force reassigning, first clear everything so the below logic works.
-        for (const job of [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`]) {
-            await corp_.setAutoJobAssignment(division, city, job, 0);
+        for (const job of [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`, `Training`]) {
+            if (employeeJobs[job] > 0)
+                await corp_.setAutoJobAssignment(division, city, job, 0);
         }
     }
 
@@ -475,6 +490,28 @@ async function maybeAutoAssignEmployees(division, city, forceAssign = false) {
         const adjustment = i < employees % jobs.length ? 1 : 0;
         await corp_.setAutoJobAssignment(division, city, jobs[i], baseEmployees + adjustment);
     }
+}
+
+/**
+ * 
+ * @param {String} division name of division
+ * @param {String} city name of city
+ * @param {String} role role to assign all employees to
+ */
+async function forceAssignEmployees(division, city, role) {
+    const office = getOffice(division, city);
+    
+    // If they're already on this job, nothing to do.
+    if (office.employeeJobs[role] === office.employees.length)
+        return;
+    
+    // First clear everything so the below logic works.
+    for (const job of [`Operations`, `Engineer`, `Business`, `Management`, `Research & Development`]) {
+        if (office.employeeJobs[job] > 0)
+            await corp_.setAutoJobAssignment(division, city, job, 0);
+    }
+
+    await corp_.setAutoJobAssignment(division, city, role, office.employees.length);
 }
 
 // 
@@ -552,17 +589,24 @@ async function tryUpsizeHireAssignAllOfficesToSize(division, targetSize) {
  * @param {String} division Name of division to purchase for
  * @param {String} city City of the warehouse to purchase for
  * @param {Number} targetSize Desired target size of the warehouse (includes upgrades)
+ * @param {Boolean} [wait=true] should we wait for funds
  */
-async function upgradeWarehouseToSize(division, city, targetSize) {
+async function upgradeWarehouseToSize(division, city, targetSize, wait = true) {
     if (!corp_.hasWarehouse(division, city)) {
-        await waitForFunds(() => corp_.getPurchaseWarehouseCost(), `purchase a warehouse in ${city}`);
+        if (wait)
+            await waitForFunds(() => corp_.getPurchaseWarehouseCost(), `purchase a warehouse in ${city}`);
+        else if (funds() < corp_.getPurchaseWarehouseCost())
+            return;
         corp_.purchaseWarehouse(division, city);
     }
 
     const costFunction = () => corp_.getUpgradeWarehouseCost(division, city);
     while (corp_.getWarehouse(division, city).size < targetSize) {
         const reason = `upgrade warehouse in ${city} from ${corp_.getWarehouse(division, city).size}`;
-        await waitForFunds(costFunction, reason);
+        if (wait)
+            await waitForFunds(costFunction, reason);
+        else if (funds() < corp_.getUpgradeWarehouseCost(division, city))
+            return;
         corp_.upgradeWarehouse(division, city);
     }
 }
@@ -830,7 +874,7 @@ async function performTobaccoExpansion() {
     // Upgrade all other cities to 9.
     for (const city of kCities) {
         await tryUpsizeHireAssignOffice(kTobaccoDivision, city, 9);
-        // Just make sure this is a warehouse at all.
+        // Just make sure this has a warehouse at all.
         await upgradeWarehouseToSize(kTobaccoDivision, city, 1);
     }
 
@@ -921,6 +965,19 @@ const kMarketTaResearchThreshold = 140e3; // 140,000 (2x 70,000)
  * Conditionally purchases the Lab and Market.TA-II researches if we have double their cost.
  */
 function maybePurchaseResearch() {
+    let maxVersion = getProducts(kTobaccoDivision).filter(product => product.name.startsWith(`Tobacco v`))
+        .map(product => product.name.replaceAll(/[^0-9]+/g, ``)) // Grab version numbers
+        .map(Number) // Formally convert for intellisense
+        .reduce((max, version) => Math.max(max, version), 0); // Get the max
+
+    if (maxVersion < 4)
+        return;
+
+    // Wait until we've done our trick investing so that the products we use for it
+    // have the most possible research.
+    if (corp().numShares >= 550e6)
+        return;
+
     const division = getDivision(kTobaccoDivision);
     const hasLab = corp_.hasResearched(kTobaccoDivision, `Hi-Tech R&D Laboratory`);
     // If >10k, purchase `Hi-Tech R&D Laboratory`
@@ -947,6 +1004,7 @@ function maybeBribeFactions(bribePort) {
     if (!bribePort)
         return;
 
+    // TODO: Bribe everyone to donations.
     const kBribeSpendingFraction = 0.05; // 5%
     let infiniteLoopDefense = 100;
     while (!bribePort.isEmpty() && --infiniteLoopDefense) {
@@ -1001,14 +1059,22 @@ async function growDevOfficeOrHireAdVert() {
 
 /**
  * If we have the funds, upgrade non-product-dev offices to within kNonDevOfficeOffset.
+ * TODO: Increase in smaller increments in case Aevum had a big jump and we can't keep up.
  */
 async function maybeGrowNonDevOffices() {
     const kNonDevOfficeOffset = 60; // Min difference between development office and others.
     const maxAlternateOfficeSize = Math.min(maxOfficeSize, getOffice(kTobaccoDivision, kProductDevCity).size - kNonDevOfficeOffset);
     for (const city of kCities.filter((city) => city != kProductDevCity)) {
+        const officeSize = getOffice(kTobaccoDivision, city).size;
         await tryUpsizeHireAssignOffice(kTobaccoDivision, city, maxAlternateOfficeSize,
             // Don't wait for funds and bail early if no upgrade happened.
             { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true });
+        if (officeSize + 15 < maxAlternateOfficeSize) {
+            // Purchase in increments of 15 if we couldn't afford the full jump.
+            await tryUpsizeHireAssignOffice(kTobaccoDivision, city, officeSize + 15,
+                // Don't wait for funds and bail early if no upgrade happened.
+                { assignEmployees: true, waitForFunds: false, returnIfNoOfficeUpgrade: true });
+        }
     }
 }
 
@@ -1018,8 +1084,9 @@ async function maybeGrowNonDevOffices() {
 function maybeGoPublic() {
     if (corp().public)
         return;
-    // TODO: Pick a better value, this is just to remove all thought for now.
-    if (funds() > 1e30) {
+    // Given our share ratio this is about 1t/s.
+    const kGoPublicThreshold = 1e21; // Sextilion
+    if (funds() > kGoPublicThreshold) {
         corp_.goPublic(1); // Just one share to enable dividends, we don't need the money.
         corp_.issueDividends(0.1); // 10%
     }
@@ -1044,7 +1111,11 @@ function tryPurchaseDividendUnlockables() {
 }
 
 /**
- * Attempt to level corp upgrades if we have enough money.
+ * Attempt to level corp upgrades if we have enough money. 
+ * 
+ * Each upgrade has an associated fraction of our funds that we're willing to spend.
+ * We ignore this fraction for upgrades below level 10, instead spending all money.
+ * 
  * TODO: Maybe lower multipliers before Aevum is at some critical mass.
  */
 async function tryLevelUpgrades() {
@@ -1064,8 +1135,110 @@ async function tryLevelUpgrades() {
     for (const upgradePair of upgrades) {
         const upgrade = String(upgradePair[0]);
         const fraction = Number(upgradePair[1]);
-        while (await tryUpgradeLevel(upgrade, false, fraction))
-            log(ns_, `Upgraded ${upgrade} to ${corp_.getUpgradeLevel(upgrade)}.`);
+        for (let loopProtection = 1000; loopProtection > 0; --loopProtection) {
+            const currentLevel = corp_.getUpgradeLevel(upgrade);
+            // Pay more of our money up to level 10.
+            const actualFraction = currentLevel < 10 ? 1.0 : fraction;
+            if (!await tryUpgradeLevel(upgrade, false, actualFraction))
+                break;
+            if (verbose)
+                log(ns_, `Upgraded ${upgrade} to ${currentLevel + 1}.`);
+        }
+    }
+}
+
+const kTobaccoTrickInvestWarehouseMinSize = 1500;
+/**
+ * Potentially perform a trick investmnent for tobacco. 
+ * Alternatively performs some preparation for such a trick investment if it's too early.
+ * 
+ * TODO: Rethink strategy for trick investing tobacco. Only seeing ~2x gains over initial offer.
+ */
+async function maybeTrickInvestTobacco() {
+    if (corp().numShares != 550e6)
+        return;
+
+    let tobaccoProducts =
+        getProducts(kTobaccoDivision).filter(product => product.name.startsWith(`Tobacco v`));
+    // If we don't yet have 3 products, this isn't worth doing.
+    if (tobaccoProducts.length < 3)
+        return;
+
+    // Once we have 3 products, opportunistically upgrade warehouses.
+    for (const city of kCities)
+        await upgradeWarehouseToSize(kTobaccoDivision, city, kTobaccoTrickInvestWarehouseMinSize, false);
+
+    // If a product is in development, we won't maximize the investment.
+    if (tobaccoProducts.some(product => product.developmentProgress < 100))
+        return;
+
+    let maxVersion = tobaccoProducts
+        .map(product => product.name.replaceAll(/[^0-9]+/g, ``)) // Grab version numbers
+        .map(Number) // Formally convert for intellisense
+        .reduce((max, version) => Math.max(max, version), 0); // Get the max
+    if (maxVersion < 5)
+        return;
+
+    for (let i = 0; i < 16; ++i) {
+        // TODO: Make sure WH is basically empty so we know the price is stable.
+        await sleepWhileNotInStartState(true);
+        await doPriceDiscovery();
+    }
+
+    // Blocking call to actually set up our warehouses if we couldn't before. We do
+    // this after price discovery of the new product so we're making more money.
+    for (const city of kCities)
+        await upgradeWarehouseToSize(kTobaccoDivision, city, kTobaccoTrickInvestWarehouseMinSize);
+
+    // If we have 3 completed products, lets trick invest.
+    await trickInvest(kTobaccoDivision, true);
+}
+
+/**
+ * Accept the final round of investing (or any round) if it's high enough.
+ */
+function maybeFinalInvest() {
+    // I've found 100q to be enough to tip us into the endgame profit cycle.
+    // In bitnodes with lower valuation multiplers, maybe we should aim lower.
+    if (corp_.getInvestmentOffer().funds > 100e15) // 100q
+        corp_.acceptInvestmentOffer();
+}
+
+/**
+ * Make the employees in the dev city happy.
+ * 
+ * Once per loop buy coffee and/or throw a party to boost employee efficiency.
+ * TODO: Maybe all cities?
+ */
+async function maybeJuiceDevCity() {
+    // Only do this until we aren't making a profit (one product)
+    if (getProducts(kTobaccoDivision).length !== 1)
+        return;
+
+    const limit = 99; // 99%
+    let employees = getOffice(kTobaccoDivision, kProductDevCity).employees.map((e) => corp_.getEmployee(kTobaccoDivision, kProductDevCity, e));
+    let avgEnergy = employees.map((e) => e.ene).reduce((sum, ene) => sum + ene, 0) / employees.length;
+
+    const kCoffeeModifier = 1.05;
+    const kCoffePricePerEmployee = 500e3;
+    if (avgEnergy < limit && funds() > kCoffePricePerEmployee * employees.length) {
+        await corp_.buyCoffee(kTobaccoDivision, kProductDevCity);
+        if (verbose)
+            log(ns_, `Purchased coffee for ${kTobaccoDivision} in ${kProductDevCity}.`);
+    }
+
+    employees = getOffice(kTobaccoDivision, kProductDevCity).employees.map((e) => corp_.getEmployee(kTobaccoDivision, kProductDevCity, e));
+    let avgMorale = employees.map((e) => e.mor).reduce((sum, mor) => sum + mor, 0) / employees.length;
+    let avgHappiness = employees.map((e) => e.hap).reduce((sum, hap) => sum + hap, 0) / employees.length;
+    // Take the lower of the two to boost.
+    let minModifier = Math.min(avgMorale, avgHappiness);
+    if (minModifier < limit) {
+        // Percent increase per dollar for the cost of the party.
+        const kPartyDivisor = 10e6;
+        // Either throw a party or not.
+        const mult = await corp_.throwParty(kTobaccoDivision, kProductDevCity, (1 - (1 / minModifier)) * kPartyDivisor);
+        if (verbose && mult)
+            log(ns_, `Threw a party for ${kTobaccoDivision} in ${kProductDevCity}, increasing happiness and morale by ${formatNumberShort(mult*100)}%.`);
     }
 }
 
@@ -1084,10 +1257,10 @@ async function tryLevelUpgrades() {
  *   - Purchases other corp upgrades with fractional corp funds
  */
 async function mainTobaccoLoop() {
-    // TODO: Maybe kill spending for corp money if it's running.
     if (!disableHashes && 9 in activeSourceFiles_) {
+        // TODO: Maybe fire off hacknet upgrade manager with stronger values?
         const fPath = getFilePath('spend-hacknet-hashes.js');
-        const args = ['--spend-on', 'Exchange_for_Corporation_Research', '--liquidate'];
+        const args = ['--spend-on', 'Exchange_for_Corporation_Research', '--spend-on', 'Sell for Corporation Funds', '--liquidate'];
         if (ns_.run(fPath, 1, ...args))
             log(ns_, `INFO: Launched '${fPath}' to gain Corp Research more quickly (Can be disabled with --disable-spending-hashes)`);
         else
@@ -1104,12 +1277,17 @@ async function mainTobaccoLoop() {
             log(ns_, `Current division research: ${formatNumberShort(getDivision(kTobaccoDivision).research)}.`);
         }
         // <Product Development>
-        // TODO: Consider trick investing one last time when we have 3 products, before discontinuing one.
+
+        await maybeTrickInvestTobacco(); // Potentially trick invest the third round of private investment.
+        maybeFinalInvest(); // Perform the final private investment if it's high enough.
+        maybeGoPublic(); // Go public and issue dividends
+
         // Discontinue first or we'll get an error (max 3 products).
         maybeDiscontinueProduct(); // Discontinue a product to make room for a new one.
         maybeDevelopNewProduct(); // Develop a new product if we are not currently.
+        await maybeJuiceDevCity(); // Boost stats of employees in the dev city to speed development.
+
         // <Research Checks>
-        // TODO: Only apply if Aevum>60 && 3 products?
         maybePurchaseResearch(); // Purchase research if we can.
         // <Spend Funds>
         while (await tryUpgradeLevel(`Wilson Analytics`, false)) // 1. Purchase `Wilson Analytics`             
@@ -1118,8 +1296,7 @@ async function mainTobaccoLoop() {
         await maybeGrowNonDevOffices(); // 3. Grow other offices to match dev office
 
         // <Investment>
-        // TODO: Check Invstors. One more investment at >$800t
-        maybeGoPublic(); // Go public and issue dividends
+        // Guide notes: Check Invstors. One more investment at >$800t
         maybeBribeFactions(bribePort); // Attempt service bribe requests.
         tryPurchaseDividendUnlockables(); // Attempt to purchase reduced-tax dividend upgrades.
         await tryLevelUpgrades(); // Level up corp upgrades
@@ -1145,7 +1322,6 @@ async function writeStats() {
 
 /** @param {NS} ns **/
 export async function main(ns) {
-    ns.tail();
     ns_ = ns;
     corp_ = ns.corporation;
     // @ts-ignore
@@ -1164,10 +1340,12 @@ export async function main(ns) {
      */
     const bitnodeMults = await tryGetBitNodeMultipliers(ns);
     // TODO: Handle BN5 not complete. (Multipliers unavailable)
-    if (bitnodeMults.CorporationValuation <= 0.1 || bitnodeMults.CorporationSoftcap < 0.1)
+    if (bitnodeMults.CorporationValuation < 0.1 || bitnodeMults.CorporationSoftcap < 0.1)
         return log(ns_, `Bitnode multipliers too low, Limit 10%. ` +
             `CorpValuation: ${bitnodeMults.CorporationValuation * 100}%, ` + 
-            `CorpSoftCap: ${bitnodeMults.CorporationSoftcap*100}%`);
+            `CorpSoftCap: ${bitnodeMults.CorporationSoftcap * 100}%`);
+    
+    ns.tail();
 
     if (runOptions[`simulate-agriculture-investor-trick`])
         return await trickInvest(kAgricultureDivision, false);
@@ -1188,7 +1366,7 @@ export async function main(ns) {
             await maybeAutoAssignEmployees(kTobaccoDivision, city, true);
         for (let i = 0; i < 10; ++i) {
             await sleepWhileNotInStartState(true);
-            doPriceDiscovery();
+            await doPriceDiscovery();
         }
         return;
     }
@@ -1211,17 +1389,31 @@ export async function main(ns) {
     if (!await initialSetup())
         return;
 
-    // Wait for happiness so that we get the best deal.
-    await waitForHappy(kAgricultureDivision);
+    if (!disableHashes && 9 in activeSourceFiles_) {
+        // TODO: Maybe fire off hacknet upgrade manager with stronger values?
+        const fPath = getFilePath('spend-hacknet-hashes.js');
+        const args = ['--spend-on', 'Sell for Corporation Funds', '--liquidate'];
+        if (ns_.run(fPath, 1, ...args))
+            log(ns_, `INFO: Launched '${fPath}' to gain Corp Money more quickly (Can be disabled with --disable-spending-hashes)`);
+        else
+            log(ns_, `WARNING: Failed to launch '${fPath}' (already running?)`);
+    }
+
     // (TARGET CHECK IN) -> ~1.5m/s Profit
     // (INVESTOR MONEY): Accept investment offer for around $210b
     // TODO: Adjust investments for bitnode multipliers
-    if (corp().numShares === 1e9 && funds() < 210e9)
+    if (corp().numShares === 1e9 && funds() < 210e9) {
+        // Wait for happiness so that we get the best deal.
+        await waitForHappy(kAgricultureDivision);
         await trickInvest(kAgricultureDivision, true);
+    }
     await secondGrowthRound();
     // (INVESTOR MONEY): Accept investment offer for $5t
-    if (corp().numShares === 900e6 && funds() < 5e12)
+    if (corp().numShares === 900e6 && funds() < 5e12) {        
+        // Wait for happiness so that we get the best deal.
+        await waitForHappy(kAgricultureDivision);
         await trickInvest(kAgricultureDivision, true);
+    }
     await thirdGrowthRound();
     // (MULTIPLIER CHECK): TODO: Expect Production Multiplier over 500
     await performTobaccoExpansion();
